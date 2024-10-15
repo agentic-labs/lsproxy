@@ -64,7 +64,13 @@ impl LspClient for TypeScriptClient {
         if typescript_filename.is_ok(){
             //turn options from file into init_options
             let file = fs::File::open(format!("/config/{}",typescript_filename.unwrap())).expect("typescript file specified but cannot be opened");
-            init_options = serde_json::from_reader(file).expect("typescript config file json parse error");                    
+            init_options = match serde_json::from_reader(file) {
+                Ok(options) => Some(options),
+                Err(e) => {
+                    error!("Failed to parse TypeScript config file: {:?}", e);
+                    None
+                },
+            };
         }
 
         let params = InitializeParams {
