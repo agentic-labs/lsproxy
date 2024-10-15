@@ -63,7 +63,10 @@ impl LspClient for TypeScriptClient {
         let mut init_options: Option<Value> = None;
         if typescript_filename.is_ok(){
             //turn options from file into init_options
-            let file = fs::File::open(format!("/config/{}",typescript_filename.unwrap())).expect("typescript file specified but cannot be opened");
+            let file = match fs::File::open(format!("/config/{}", typescript_filename.unwrap())) {
+                Ok(f) => f,
+                Err(e) => return Err(Box::new(e) as Box<dyn Error + Send + Sync>),
+            };
             init_options = match serde_json::from_reader(file) {
                 Ok(options) => Some(options),
                 Err(e) => {

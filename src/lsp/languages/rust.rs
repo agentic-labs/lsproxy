@@ -60,8 +60,13 @@ impl LspClient for RustClient {
                 Ok(f) => f,
                 Err(e) => return Err(Box::new(e) as Box<dyn Error + Send + Sync>),
             };
-            init_options = serde_json::from_reader(file).expect("rust config file json parse error");                    
-        }
+            init_options = match serde_json::from_reader(file) {
+                Ok(options) => Some(options),
+                Err(e) => {
+                    error!("Failed to parse Rust config file: {:?}", e);
+                    None
+                },
+            };        }
 
         let params = InitializeParams {
             capabilities: Default::default(),

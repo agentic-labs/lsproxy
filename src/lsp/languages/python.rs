@@ -40,7 +40,7 @@ impl PythonClient {
                     if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyproject.toml", root_path)) {
                         eprintln!("Failed to copy pyproject.toml: {:?}", e);
                     }
-                    ...
+                } else {                    
                     if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyrightconfig.json", root_path)) {
                         eprintln!("Failed to copy pyrightconfig.json: {:?}", e);
                     }
