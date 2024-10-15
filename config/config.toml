@@ -1,0 +1,20 @@
+#Configurations below represent default options. All sections are optional.
+
+#environment variables for the docker container {EXAMPLE HERE}
+[environment]
+default_languages ="python,rust,typescript"
+
+#config to pass for every language server {EXAMPLE HERE}
+[all]
+
+#config to pass for python {LINKS TO DOCS HERE}
+[python]
+file="python_config_file_example.json"
+file_type="pyrightconfig" #if not pyrightconfig, assumes it's a pyproject.toml file
+
+#config to pass for rust {LINKS TO DOCS HERE}
+[rust]
+file="rust_config_file_example.json"
+
+#config to pass for typescript {LINKS TO DOCS HERE}
+[typescript]

@@ -27,6 +27,9 @@ RUN npm install -g typescript-language-server typescript
 # Copy the binary from the host into the container
 COPY target/release/lsp-adapter-server .
 
+# Copy configs from the host into the container
+COPY config /config
+
 # Document that the container listens on port 8080
 EXPOSE 8080
 

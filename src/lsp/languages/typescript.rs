@@ -1,12 +1,14 @@
-use std::{error::Error, process::Stdio};
+use std::{error::Error, fs, process::Stdio};
 
 use async_trait::async_trait;
-use log::{debug, warn};
-use lsp_types::WorkspaceFolder;
+use config::{Config, File};
+use log::{debug,error, warn};
+use lsp_types::{InitializeParams, InitializeResult, Url, WorkspaceFolder};
+use serde_json::Value;
 use tokio::process::Command;
 
 use crate::{
-    lsp::{JsonRpcHandler, LspClient, ProcessHandler},
+    lsp::{JsonRpc, JsonRpcHandler, LspClient, Process, ProcessHandler},
     utils::get_files_for_workspace_typescript,
 };
 
@@ -45,6 +47,53 @@ impl LspClient for TypeScriptClient {
     ) -> Result<Vec<WorkspaceFolder>, Box<dyn Error + Send + Sync>> {
         warn!("TypeScriptClient does not support finding workspace folders");
         Ok(vec![])
+    }
+
+    async fn initialize(
+        &mut self,
+        root_path: String,
+    ) -> Result<InitializeResult, Box<dyn Error + Send + Sync>> {
+        debug!("Initializing LSP client with root path: {:?}", root_path);
+
+        let s = Config::builder()
+        .add_source(File::with_name("/config/config.toml"))
+        .build()?;
+        //if file is specified, parse from json. we will send them back as json later
+        let typescript_filename = s.get::<String>("typescript.file");
+        let mut init_options: Option<Value> = None;
+        if typescript_filename.is_ok(){
+            //turn options from file into init_options
+            let file = fs::File::open(format!("/config/{}",typescript_filename.unwrap())).expect("typescript file specified but cannot be opened");
+            init_options = serde_json::from_reader(file).expect("typescript config file json parse error");                    
+        }
+
+        let params = InitializeParams {
+            capabilities: Default::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_file_path(root_path.clone()).unwrap(),
+                name: root_path.clone(),
+            }]),
+            root_uri: Some(Url::from_file_path(root_path.clone()).unwrap()),
+            initialization_options: init_options,
+            ..Default::default()
+        };
+        let request = self
+            .get_json_rpc()
+            .create_request("initialize", serde_json::to_value(params)?);
+        let message = format!("Content-Length: {}\r\n\r\n{}", request.len(), request);
+        self.get_process().send(&message).await?;
+        let response = self.receive_response().await?.expect("No response");
+        if let Some(result) = response.result {
+            let init_result: InitializeResult = serde_json::from_value(result)?;
+            debug!("Initialization successful: {:?}", init_result);
+            self.send_initialized().await?;
+            Ok(init_result)
+        } else if let Some(error) = response.error {
+            error!("Initialization error: {:?}", error);
+            Err(Box::new(error) as Box<dyn Error + Send + Sync>)
+        } else {
+            Err("Unexpected initialize response".into())
+        }
     }
 }
 

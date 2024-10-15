@@ -26,3 +26,4 @@ tree-sitter-python = "0.20"
 glob = "0.3.1"
 thiserror = "1.0.64"
 uuid = { version = "1.10.0", features = ["v4"] }
+config = "0.14.0"
