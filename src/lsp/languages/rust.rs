@@ -56,7 +56,10 @@ impl LspClient for RustClient {
         let mut init_options: Option<Value> = None;
         if rust_filename.is_ok(){
             //turn options from file into init_options
-            let file = fs::File::open(format!("/config/{}",rust_filename.unwrap())).expect("rust file specified but cannot be opened");
+            let file = match fs::File::open(format!("/config/{}", rust_filename.unwrap())) {
+                Ok(f) => f,
+                Err(e) => return Err(Box::new(e) as Box<dyn Error + Send + Sync>),
+            };
             init_options = serde_json::from_reader(file).expect("rust config file json parse error");                    
         }
 
