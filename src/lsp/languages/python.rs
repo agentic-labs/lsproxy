@@ -1,9 +1,10 @@
-use std::{fs, process::Stdio};
-
-use async_trait::async_trait;
-use tokio::process::Command;
+use std::{collections::HashMap, fs, process::Stdio};
 
 use crate::lsp::{JsonRpcHandler, LspClient, ProcessHandler};
+use async_trait::async_trait;
+use log::debug;
+use std::path::Path;
+use tokio::process::Command;
 
 use config::{Config, File};
 
@@ -25,28 +26,57 @@ impl LspClient for PythonClient {
 
 impl PythonClient {
     pub async fn new(root_path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        //pyright initialization works best by simply allowing the server to read the proper file on startup.
-        //first parse our config.toml file to see if that's necessary
-        let s = Config::builder()
-        .add_source(File::with_name("/config/config.toml"))
-        .build()?;
-        //if file is specified, but file_type is either not specified or something other than "pyrightconfig", we assume it's a pyproject.toml file.
-        let python_filename = s.get::<String>("python.file");
-        if python_filename.is_ok(){
-            //copy the file included on run to the proper location.
-            let python_filetype = s.get::<String>("python.file_type");
-            if python_filetype.is_ok(){
-                if python_filetype.unwrap() != "pyrightconfig" {
-                    if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyproject.toml", root_path)) {
-                        eprintln!("Failed to copy pyproject.toml: {:?}", e);
-                    }
-                } else {                    
-                    if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyrightconfig.json", root_path)) {
-                        eprintln!("Failed to copy pyrightconfig.json: {:?}", e);
+        //if pyrightconfig already exists in the project directory or if the pyproject.toml contains a "tool.pyright" section, skip configuration
+        let mut pyright_test = Path::new(&format!("{}/pyrightconfig.json", root_path)).exists();
+        if !pyright_test {
+            //test pyproject.toml
+            match Config::builder()
+                .add_source(File::with_name(&format!("{}/pyproject.toml", root_path)))
+                .build()
+            {
+                Ok(s) => {
+                    match s.get::<HashMap<String, String>>("tool.pyright") {
+                        Ok(_) => pyright_test = true,
+                        Err(_) => {
+                            debug!("found pyproject.toml but didn't contain a tool.pyright section, initializing using config/pyrightconfig.json if it exists.")
+                        }
+                    };
+                }
+                Err(_) => {
+                    debug!("Checked for pyproject.toml and it either didn't exist or we couldn't parse it, initializing using config/pyrightconfig.json if it exists")
+                }
+            };
+        }
+        if !pyright_test {
+            //pyright initialization works best by simply allowing the server to read the proper file on startup.
+            //first parse our config.toml file to see if that's necessary
+            let s = Config::builder()
+                .add_source(File::with_name("/config/config.toml"))
+                .build()?;
+            //if file is specified, but file_type is either not specified or something other than "pyrightconfig", we assume it's a pyproject.toml file.
+            let python_filename = s.get::<String>("python.file");
+            if python_filename.is_ok() {
+                //copy the file included on run to the proper location.
+                let python_filetype = s.get::<String>("python.file_type");
+                if python_filetype.is_ok() {
+                    if python_filetype.unwrap() != "pyrightconfig" {
+                        if let Err(e) = fs::copy(
+                            format!("/config/{}", python_filename.unwrap()),
+                            format!("{}/pyproject.toml", root_path),
+                        ) {
+                            eprintln!("Failed to copy pyproject.toml: {:?}", e);
+                        }
+                    } else {
+                        if let Err(e) = fs::copy(
+                            format!("/config/{}", python_filename.unwrap()),
+                            format!("{}/pyrightconfig.json", root_path),
+                        ) {
+                            eprintln!("Failed to copy pyrightconfig.json: {:?}", e);
+                        }
                     }
                 }
             }
-        }       
+        }
 
         let process = Command::new("pyright-langserver")
             .arg("--stdio")
