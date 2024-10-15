@@ -37,9 +37,13 @@ impl PythonClient {
             let python_filetype = s.get::<String>("python.file_type");
             if python_filetype.is_ok(){
                 if python_filetype.unwrap() != "pyrightconfig" {
-                    let _ = fs::copy(format!("/config/{}",python_filename.unwrap()),format!("{}/pyproject.toml",root_path));
-                } else {
-                    let _ = fs::copy(format!("/config/{}",python_filename.unwrap()),format!("{}/pyrightconfig.json",root_path));
+                    if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyproject.toml", root_path)) {
+                        eprintln!("Failed to copy pyproject.toml: {:?}", e);
+                    }
+                    ...
+                    if let Err(e) = fs::copy(format!("/config/{}", python_filename.unwrap()), format!("{}/pyrightconfig.json", root_path)) {
+                        eprintln!("Failed to copy pyrightconfig.json: {:?}", e);
+                    }
                 }
             }
         }       
