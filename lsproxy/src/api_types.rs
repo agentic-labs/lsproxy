@@ -1,4 +1,4 @@
-use crate::utils::api_utils::{flatten_nested_symbols, uri_to_path_str};
+use crate::utils::api_utils::{flatten_nested_symbols, symbol_kind_to_string, uri_to_path_str};
 use lsp_types::*;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -89,7 +89,7 @@ impl From<SymbolInformation> for Symbol {
     fn from(symbol: SymbolInformation) -> Self {
         Self {
             name: symbol.name,
-            kind: symbol_kind_to_string(&symbol.kind).to_string(),
+            kind: symbol_kind_to_string(symbol.kind).to_string(),
             identifier_start_position: FilePosition::from(symbol.location),
         }
     }
@@ -108,7 +108,7 @@ impl From<WorkspaceSymbol> for Symbol {
 
         Self {
             name: symbol.name,
-            kind: symbol_kind_to_string(&symbol.kind).to_string(),
+            kind: symbol_kind_to_string(symbol.kind).to_string(),
             identifier_start_position: FilePosition {
                 path,
                 line,
@@ -134,8 +134,8 @@ impl From<GotoDefinitionResponse> for DefinitionResponse {
     }
 }
 
-impl From<Vec<LspLocation>> for ReferenceResponse {
-    fn from(locations: Vec<LspLocation>) -> Self {
+impl From<Vec<Location>> for ReferenceResponse {
+    fn from(locations: Vec<Location>) -> Self {
         Self {
             raw_response: serde_json::to_value(&locations).unwrap_or_default(),
             data: locations.into_iter().map(FilePosition::from).collect(),
@@ -177,7 +177,7 @@ impl SymbolResponse {
                     .into_iter()
                     .map(|symbol| Symbol {
                         name: symbol.name,
-                        kind: symbol_kind_to_string(&symbol.kind).to_string(),
+                        kind: symbol_kind_to_string(symbol.kind).to_string(),
                         identifier_start_position: FilePosition {
                             path: file_path.to_string(),
                             line: symbol.location.range.start.line,
@@ -190,50 +190,5 @@ impl SymbolResponse {
                 }
             },
         }
-    }
-}
-
-/// Converts a `SymbolKind` to its string representation.
-///
-/// Utilizes `strum` for cleaner enum management.
-///
-/// # Arguments
-///
-/// * `kind` - The symbol kind from LSP types.
-///
-/// # Returns
-///
-/// A string slice representing the symbol kind.
-fn symbol_kind_to_string(kind: &SymbolKind) -> &str {
-    use SymbolKind::*;
-    match kind {
-        FILE => "file",
-        MODULE => "module",
-        NAMESPACE => "namespace",
-        PACKAGE => "package",
-        CLASS => "class",
-        METHOD => "method",
-        PROPERTY => "property",
-        FIELD => "field",
-        CONSTRUCTOR => "constructor",
-        ENUM => "enum",
-        INTERFACE => "interface",
-        FUNCTION => "function",
-        VARIABLE => "variable",
-        CONSTANT => "constant",
-        STRING => "string",
-        NUMBER => "number",
-        BOOLEAN => "boolean",
-        ARRAY => "array",
-        OBJECT => "object",
-        KEY => "key",
-        NULL => "null",
-        ENUM_MEMBER => "enum_member",
-        STRUCT => "struct",
-        EVENT => "event",
-        OPERATOR => "operator",
-        TYPE_PARAMETER => "type_parameter",
-        // Add all existing SymbolKind variants here
-        _ => "unknown",
     }
 }

@@ -1,6 +1,7 @@
 use crate::api_types::{FilePosition, Symbol};
-use lsp_types::DocumentSymbol;
+use lsp_types::{DocumentSymbol, SymbolKind};
 use std::path::{Path, PathBuf};
+use url::Url;
 
 const MOUNT_DIR: &str = "/mnt/repo";
 
@@ -51,7 +52,7 @@ pub fn flatten_nested_symbols(symbols: Vec<DocumentSymbol>, file_path: &str) -> 
 fn recursive_flatten(symbol: DocumentSymbol, file_path: &str) -> Vec<Symbol> {
     let mut result = vec![Symbol {
         name: symbol.name,
-        kind: symbol_kind_to_string(&symbol.kind).to_string(),
+        kind: symbol_kind_to_string(symbol.kind).to_string(),
         identifier_start_position: FilePosition {
             path: file_path.to_string(),
             line: symbol.selection_range.start.line,
@@ -65,4 +66,47 @@ fn recursive_flatten(symbol: DocumentSymbol, file_path: &str) -> Vec<Symbol> {
         }
     }
     result
+}
+
+/// Converts a `SymbolKind` to its string representation.
+///
+/// Utilizes `strum` for cleaner enum management.
+///
+/// # Arguments
+///
+/// * `kind` - The symbol kind from LSP types.
+///
+/// # Returns
+///
+/// A string slice representing the symbol kind.
+pub fn symbol_kind_to_string(kind: SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::FILE => "file",
+        SymbolKind::MODULE => "module",
+        SymbolKind::NAMESPACE => "namespace",
+        SymbolKind::PACKAGE => "package",
+        SymbolKind::CLASS => "class",
+        SymbolKind::METHOD => "method",
+        SymbolKind::PROPERTY => "property",
+        SymbolKind::FIELD => "field",
+        SymbolKind::CONSTRUCTOR => "constructor",
+        SymbolKind::ENUM => "enum",
+        SymbolKind::INTERFACE => "interface",
+        SymbolKind::FUNCTION => "function",
+        SymbolKind::VARIABLE => "variable",
+        SymbolKind::CONSTANT => "constant",
+        SymbolKind::STRING => "string",
+        SymbolKind::NUMBER => "number",
+        SymbolKind::BOOLEAN => "boolean",
+        SymbolKind::ARRAY => "array",
+        SymbolKind::OBJECT => "object",
+        SymbolKind::KEY => "key",
+        SymbolKind::NULL => "null",
+        SymbolKind::ENUM_MEMBER => "enum_member",
+        SymbolKind::STRUCT => "struct",
+        SymbolKind::EVENT => "event",
+        SymbolKind::OPERATOR => "operator",
+        SymbolKind::TYPE_PARAMETER => "type_parameter",
+        _ => "unknown",
+    }
 }
