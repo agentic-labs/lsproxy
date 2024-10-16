@@ -81,7 +81,7 @@ struct Cli {
     path = "/definition",
     params(GetDefinitionRequest),
     responses(
-        (status = 200, description = "Definition retrieved successfully", body = SimpleGotoDefinitionResponse),
+        (status = 200, description = "Definition retrieved successfully", body = DefinitionResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error")
     )
@@ -129,7 +129,7 @@ async fn get_definition(
     path = "/file-symbols",
     params(FileSymbolsRequest),
     responses(
-        (status = 200, description = "Symbols retrieved successfully", body = SimpleSymbolResponse),
+        (status = 200, description = "Symbols retrieved successfully", body = SymbolResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error")
     )
@@ -163,7 +163,7 @@ async fn file_symbols(
     path = "/workspace-symbols",
     params(WorkspaceSymbolsRequest),
     responses(
-        (status = 200, description = "Workspace symbols retrieved successfully", body = SimpleSymbolResponse),
+        (status = 200, description = "Workspace symbols retrieved successfully", body = SymbolResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error")
     )
@@ -197,7 +197,7 @@ async fn workspace_symbols(
     path = "/references",
     params(GetReferencesRequest),
     responses(
-        (status = 200, description = "References retrieved successfully", body = SimpleReferenceResponse),
+        (status = 200, description = "References retrieved successfully", body = ReferenceResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error")
     )
