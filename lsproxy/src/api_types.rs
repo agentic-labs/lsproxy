@@ -1,70 +1,73 @@
-use lsp_types::{
-    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Location as LspLocation,
-    LocationLink, OneOf, SymbolInformation, SymbolKind, Url, WorkspaceSymbol,
-    WorkspaceSymbolResponse,
-};
+use crate::utils::api_utils::{flatten_nested_symbols, uri_to_path_str};
+use lsp_types::*;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::hash::Hash;
-use std::path::{Path, PathBuf};
 use strum_macros::{Display, EnumString};
+use utoipa::ToSchema;
 
 pub const MOUNT_DIR: &str = "/mnt/repo";
 
+/// Enumerates the supported programming languages.
 #[derive(
-    Debug,
-    EnumString,
-    Display,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    utoipa::ToSchema,
+    Debug, EnumString, Display, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema,
 )]
 #[strum(serialize_all = "lowercase")]
 pub enum SupportedLanguages {
     Python,
+    #[strum(serialize = "typescript_javascript")]
     TypeScriptJavaScript,
     Rust,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+/// Represents a position within a file.
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FilePosition {
+    /// The file path relative to the mount directory.
+    #[schema(example = "/src/main.rs")]
     pub path: String,
+
+    /// The line number (0-based).
+    #[schema(example = 42)]
     pub line: u32,
+
+    /// The character offset (0-based).
+    #[schema(example = 10)]
     pub character: u32,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+/// Represents a symbol in the codebase.
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Symbol {
+    /// The name of the symbol.
+    #[schema(example = "my_function")]
     pub name: String,
+
+    /// The kind/type of the symbol.
+    #[schema(example = "function")]
     pub kind: String,
+
+    /// The starting position of the symbol's identifier.
     pub identifier_start_position: FilePosition,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DefinitionResponse {
-    raw_response: serde_json::Value,
-    definitions: Vec<FilePosition>,
+/// Generic API response structure.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ApiResponse<T> {
+    /// The raw JSON response from the LSP server.
+    pub raw_response: serde_json::Value,
+
+    /// The simplified and restructured data from the raw response.
+    pub data: T,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct ReferenceResponse {
-    raw_response: serde_json::Value,
-    references: Vec<FilePosition>,
-}
+pub type DefinitionResponse = ApiResponse<Vec<FilePosition>>;
+pub type ReferenceResponse = ApiResponse<Vec<FilePosition>>;
+pub type SymbolResponse = ApiResponse<Vec<Symbol>>;
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct SymbolResponse {
-    raw_response: serde_json::Value,
-    symbols: Vec<Symbol>,
-}
-
-impl From<LspLocation> for FilePosition {
-    fn from(location: LspLocation) -> Self {
-        FilePosition {
+impl From<Location> for FilePosition {
+    fn from(location: Location) -> Self {
+        Self {
             path: uri_to_path_str(location.uri),
             line: location.range.start.line,
             character: location.range.start.character,
@@ -74,7 +77,7 @@ impl From<LspLocation> for FilePosition {
 
 impl From<LocationLink> for FilePosition {
     fn from(link: LocationLink) -> Self {
-        FilePosition {
+        Self {
             path: uri_to_path_str(link.target_uri),
             line: link.target_range.start.line,
             character: link.target_range.start.character,
@@ -84,7 +87,7 @@ impl From<LocationLink> for FilePosition {
 
 impl From<SymbolInformation> for Symbol {
     fn from(symbol: SymbolInformation) -> Self {
-        Symbol {
+        Self {
             name: symbol.name,
             kind: symbol_kind_to_string(&symbol.kind).to_string(),
             identifier_start_position: FilePosition::from(symbol.location),
@@ -94,7 +97,7 @@ impl From<SymbolInformation> for Symbol {
 
 impl From<WorkspaceSymbol> for Symbol {
     fn from(symbol: WorkspaceSymbol) -> Self {
-        let (path, identifier_start_line, identifier_start_character) = match symbol.location {
+        let (path, line, character) = match symbol.location {
             OneOf::Left(location) => (
                 uri_to_path_str(location.uri),
                 location.range.start.line,
@@ -103,13 +106,13 @@ impl From<WorkspaceSymbol> for Symbol {
             OneOf::Right(workspace_location) => (uri_to_path_str(workspace_location.uri), 0, 0),
         };
 
-        Symbol {
+        Self {
             name: symbol.name,
             kind: symbol_kind_to_string(&symbol.kind).to_string(),
             identifier_start_position: FilePosition {
                 path,
-                line: identifier_start_line,
-                character: identifier_start_character,
+                line,
+                character,
             },
         }
     }
@@ -118,10 +121,8 @@ impl From<WorkspaceSymbol> for Symbol {
 impl From<GotoDefinitionResponse> for DefinitionResponse {
     fn from(response: GotoDefinitionResponse) -> Self {
         let raw_response = serde_json::to_value(&response).unwrap_or_default();
-        let definitions = match response {
-            GotoDefinitionResponse::Scalar(location) => {
-                vec![FilePosition::from(location)]
-            }
+        let data = match response {
+            GotoDefinitionResponse::Scalar(location) => vec![FilePosition::from(location)],
             GotoDefinitionResponse::Array(locations) => {
                 locations.into_iter().map(FilePosition::from).collect()
             }
@@ -129,134 +130,110 @@ impl From<GotoDefinitionResponse> for DefinitionResponse {
                 links.into_iter().map(FilePosition::from).collect()
             }
         };
-        DefinitionResponse {
-            raw_response,
-            definitions,
-        }
+        Self { raw_response, data }
     }
 }
 
 impl From<Vec<LspLocation>> for ReferenceResponse {
     fn from(locations: Vec<LspLocation>) -> Self {
-        let raw_response = serde_json::to_value(&locations).unwrap_or_default();
-        let references = locations.into_iter().map(FilePosition::from).collect();
-        ReferenceResponse {
-            raw_response,
-            references,
+        Self {
+            raw_response: serde_json::to_value(&locations).unwrap_or_default(),
+            data: locations.into_iter().map(FilePosition::from).collect(),
         }
     }
 }
 
 impl From<Vec<WorkspaceSymbolResponse>> for SymbolResponse {
     fn from(responses: Vec<WorkspaceSymbolResponse>) -> Self {
-        let raw_response = serde_json::to_value(&responses).unwrap_or_default();
-        let symbols: Vec<Symbol> = responses
-            .into_iter()
-            .flat_map(|response| match response {
-                WorkspaceSymbolResponse::Flat(symbols) => {
-                    symbols.into_iter().map(Symbol::from).collect::<Vec<_>>()
-                }
-                WorkspaceSymbolResponse::Nested(symbols) => {
-                    symbols.into_iter().map(Symbol::from).collect()
-                }
-            })
-            .collect();
-
-        SymbolResponse {
-            raw_response,
-            symbols,
+        Self {
+            raw_response: serde_json::to_value(&responses).unwrap_or_default(),
+            data: responses
+                .into_iter()
+                .flat_map(|response| match response {
+                    WorkspaceSymbolResponse::Flat(symbols) => {
+                        symbols.into_iter().map(Symbol::from).collect::<Vec<_>>()
+                    }
+                    WorkspaceSymbolResponse::Nested(symbols) => {
+                        symbols.into_iter().map(Symbol::from).collect()
+                    }
+                })
+                .collect(),
         }
     }
 }
 
 impl SymbolResponse {
+    /// Creates a new `SymbolResponse` from a `DocumentSymbolResponse`.
+    ///
+    /// # Arguments
+    ///
+    /// * `response` - The document symbol response from the LSP server.
+    /// * `file_path` - The file path associated with the symbols.
     pub fn new(response: DocumentSymbolResponse, file_path: &str) -> Self {
-        let raw_response = serde_json::to_value(&response).unwrap_or_default();
-        let symbols = match response {
-            DocumentSymbolResponse::Flat(symbols) => symbols
-                .into_iter()
-                .map(|symbol| Symbol {
-                    name: symbol.name,
-                    kind: symbol_kind_to_string(&symbol.kind).to_string(),
-                    identifier_start_position: FilePosition {
-                        path: file_path.to_string(),
-                        line: symbol.location.range.start.line,
-                        character: symbol.location.range.start.character,
-                    },
-                })
-                .collect(),
-            DocumentSymbolResponse::Nested(symbols) => flatten_nested_symbols(symbols, file_path),
-        };
-        SymbolResponse {
-            raw_response,
-            symbols,
-        }
-    }
-}
-
-fn uri_to_path_str(uri: Url) -> String {
-    let path = uri
-        .to_file_path()
-        .unwrap_or_else(|_| PathBuf::from(uri.path()));
-
-    let mount_dir = Path::new(MOUNT_DIR);
-    path.strip_prefix(mount_dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
-}
-
-fn flatten_nested_symbols(symbols: Vec<DocumentSymbol>, file_path: &str) -> Vec<Symbol> {
-    fn recursive_flatten(symbol: DocumentSymbol, file_path: &str, result: &mut Vec<Symbol>) {
-        result.push(Symbol {
-            name: symbol.name,
-            kind: symbol_kind_to_string(&symbol.kind).to_string(),
-            identifier_start_position: FilePosition {
-                path: file_path.to_string(),
-                line: symbol.selection_range.start.line,
-                character: symbol.selection_range.start.character,
+        Self {
+            raw_response: serde_json::to_value(&response).unwrap_or_default(),
+            data: match response {
+                DocumentSymbolResponse::Flat(symbols) => symbols
+                    .into_iter()
+                    .map(|symbol| Symbol {
+                        name: symbol.name,
+                        kind: symbol_kind_to_string(&symbol.kind).to_string(),
+                        identifier_start_position: FilePosition {
+                            path: file_path.to_string(),
+                            line: symbol.location.range.start.line,
+                            character: symbol.location.range.start.character,
+                        },
+                    })
+                    .collect(),
+                DocumentSymbolResponse::Nested(symbols) => {
+                    flatten_nested_symbols(symbols, file_path)
+                }
             },
-        });
-
-        for child in symbol.children.unwrap_or_default() {
-            recursive_flatten(child, file_path, result);
         }
     }
-
-    let mut flattened = Vec::new();
-    for symbol in symbols {
-        recursive_flatten(symbol, file_path, &mut flattened);
-    }
-    flattened
 }
 
+/// Converts a `SymbolKind` to its string representation.
+///
+/// Utilizes `strum` for cleaner enum management.
+///
+/// # Arguments
+///
+/// * `kind` - The symbol kind from LSP types.
+///
+/// # Returns
+///
+/// A string slice representing the symbol kind.
 fn symbol_kind_to_string(kind: &SymbolKind) -> &str {
+    use SymbolKind::*;
     match kind {
-        &SymbolKind::FILE => "file",
-        &SymbolKind::MODULE => "module",
-        &SymbolKind::NAMESPACE => "namespace",
-        &SymbolKind::PACKAGE => "package",
-        &SymbolKind::CLASS => "class",
-        &SymbolKind::METHOD => "method",
-        &SymbolKind::PROPERTY => "property",
-        &SymbolKind::FIELD => "field",
-        &SymbolKind::CONSTRUCTOR => "constructor",
-        &SymbolKind::ENUM => "enum",
-        &SymbolKind::INTERFACE => "interface",
-        &SymbolKind::FUNCTION => "function",
-        &SymbolKind::VARIABLE => "variable",
-        &SymbolKind::CONSTANT => "constant",
-        &SymbolKind::STRING => "string",
-        &SymbolKind::NUMBER => "number",
-        &SymbolKind::BOOLEAN => "boolean",
-        &SymbolKind::ARRAY => "array",
-        &SymbolKind::OBJECT => "object",
-        &SymbolKind::KEY => "key",
-        &SymbolKind::NULL => "null",
-        &SymbolKind::ENUM_MEMBER => "enum_member",
-        &SymbolKind::STRUCT => "struct",
-        &SymbolKind::EVENT => "event",
-        &SymbolKind::OPERATOR => "operator",
-        &SymbolKind::TYPE_PARAMETER => "type_parameter",
-        _ => "unknown", // Default case for any future additions
+        FILE => "file",
+        MODULE => "module",
+        NAMESPACE => "namespace",
+        PACKAGE => "package",
+        CLASS => "class",
+        METHOD => "method",
+        PROPERTY => "property",
+        FIELD => "field",
+        CONSTRUCTOR => "constructor",
+        ENUM => "enum",
+        INTERFACE => "interface",
+        FUNCTION => "function",
+        VARIABLE => "variable",
+        CONSTANT => "constant",
+        STRING => "string",
+        NUMBER => "number",
+        BOOLEAN => "boolean",
+        ARRAY => "array",
+        OBJECT => "object",
+        KEY => "key",
+        NULL => "null",
+        ENUM_MEMBER => "enum_member",
+        STRUCT => "struct",
+        EVENT => "event",
+        OPERATOR => "operator",
+        TYPE_PARAMETER => "type_parameter",
+        // Add all existing SymbolKind variants here
+        _ => "unknown",
     }
 }
