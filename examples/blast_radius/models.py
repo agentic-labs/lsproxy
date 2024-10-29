@@ -136,8 +136,11 @@ class Symbol(BaseModel):
         example="class",
     )
     name: str = Field(..., description="The name of the symbol.", example="User")
-    start_position: FilePosition = Field(
-        ..., description="The starting position of the symbol's identifier."
+    identifier_position: FilePosition = Field(
+        ..., description="The start position of the symbol's identifier."
+    )
+    range: FileRange = Field(
+        ..., description="The full range of the symbol."
     )
 
 
@@ -217,9 +220,9 @@ class ReferencesResponse(BaseModel):
 class GetReferencesRequest(BaseModel):
     """Request to find all references to a symbol."""
 
-    start_position: FilePosition = Field(
+    identifier_position: FilePosition = Field(
         ...,
-        description="The starting position of the symbol whose references are to be found.",
+        description="The position of the symbol whose references are to be found.",
     )
     include_code_context_lines: Optional[int] = Field(
         None,
