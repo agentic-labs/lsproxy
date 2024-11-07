@@ -1,10 +1,9 @@
 use std::{error::Error, path::Path, process::Stdio};
 
 use async_trait::async_trait;
-use log::debug;
 use lsp_types::{
-    ClientCapabilities, DocumentSymbolClientCapabilities, InitializeParams, InitializeResult,
-    TextDocumentClientCapabilities,
+    ClientCapabilities, DocumentSymbolClientCapabilities, InitializeParams,
+    TextDocumentClientCapabilities, WorkspaceFolder,
 };
 use notify_debouncer_mini::DebouncedEvent;
 use tokio::process::Command;
@@ -26,52 +25,6 @@ pub struct RustAnalyzerClient {
 
 #[async_trait]
 impl LspClient for RustAnalyzerClient {
-    async fn initialize(
-        &mut self,
-        root_path: String,
-    ) -> Result<InitializeResult, Box<dyn Error + Send + Sync>> {
-        debug!("Initializing LSP client with root path: {:?}", root_path);
-        self.start_response_listener().await?;
-
-        let workspace_folders = self.find_workspace_folders(root_path.clone()).await?;
-        debug!("Found workspace folders: {:?}", workspace_folders);
-        let mut capabilities = ClientCapabilities::default();
-        capabilities.text_document = Some(TextDocumentClientCapabilities {
-            document_symbol: Some(DocumentSymbolClientCapabilities {
-                hierarchical_document_symbol_support: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-
-        capabilities.experimental = Some(serde_json::json!({
-            "serverStatusNotification": true
-        }));
-
-        let params = InitializeParams {
-            capabilities,
-            workspace_folders: Some(workspace_folders.clone()),
-            root_uri: Some(workspace_folders[0].uri.clone()),
-            // TODO THIS WILL CAUSE A BUNCH OF LINT ERRORS
-            // We are doing this because we want to avoid looking up defs and refs in cargo registry
-            // which is prohibitively slow
-            initialization_options: Some(serde_json::json!({
-                "cargo": {
-                "sysroot": serde_json::Value::Null
-                }
-            })),
-            ..Default::default()
-        };
-
-        let result = self
-            .send_request("initialize", Some(serde_json::to_value(params)?))
-            .await?;
-        let init_result: InitializeResult = serde_json::from_value(result)?;
-        debug!("Initialization successful: {:?}", init_result);
-        self.send_initialized().await?;
-        Ok(init_result)
-    }
-
     fn get_process(&mut self) -> &mut ProcessHandler {
         &mut self.process
     }
@@ -103,6 +56,40 @@ impl LspClient for RustAnalyzerClient {
         self.send_request("rust-analyzer/reloadWorkspace", None)
             .await?;
         Ok(())
+    }
+
+    fn get_initialize_params(
+        &mut self,
+        workspace_folders: Vec<WorkspaceFolder>,
+    ) -> InitializeParams {
+        let mut capabilities = ClientCapabilities::default();
+        capabilities.text_document = Some(TextDocumentClientCapabilities {
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                hierarchical_document_symbol_support: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        capabilities.experimental = Some(serde_json::json!({
+            "serverStatusNotification": true
+        }));
+
+        let params = InitializeParams {
+            capabilities,
+            workspace_folders: Some(workspace_folders.clone()),
+            root_uri: Some(workspace_folders[0].uri.clone()),
+            // TODO THIS WILL CAUSE A BUNCH OF LINT ERRORS
+            // We are doing this because we want to avoid looking up defs and refs in cargo registry
+            // which is prohibitively slow
+            initialization_options: Some(serde_json::json!({
+                "cargo": {
+                "sysroot": serde_json::Value::Null
+                }
+            })),
+            ..Default::default()
+        };
+        params
     }
 }
 

@@ -4,3 +4,5 @@ rule:
     kind: identifier
     inside:
       kind: function_definition
+    not:
+      regex: ^__[a-zA-Z0-9_]+__$

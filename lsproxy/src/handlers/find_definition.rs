@@ -3,7 +3,7 @@ use crate::lsp::manager::{LspManagerError, Manager};
 use crate::utils::file_utils::uri_to_relative_path_string;
 use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 use crate::api_types::{DefinitionResponse, GetDefinitionRequest};
 use crate::AppState;
@@ -74,7 +74,7 @@ pub async fn find_definition(
             })
         })
         .unwrap();
-
+    debug!("definitions: {:?}", definitions);
     let source_code_context = if info.include_source_code {
         match fetch_definition_source_code(&manager, &definitions).await {
             Ok(context) => Some(context),

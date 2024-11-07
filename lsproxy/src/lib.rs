@@ -125,7 +125,11 @@ pub async fn run_server_with_port(app_state: Data<AppState>, port: u16) -> std::
     run_server_with_port_and_host(app_state, port, "0.0.0.0").await
 }
 
-pub async fn run_server_with_port_and_host(app_state: Data<AppState>, port: u16, host: &str) -> std::io::Result<()> {
+pub async fn run_server_with_port_and_host(
+    app_state: Data<AppState>,
+    port: u16,
+    host: &str,
+) -> std::io::Result<()> {
     if let Err(e) = check_mount_dir() {
         eprintln!(
             "Error: Your workspace isn't mounted at '{}'. Please mount your workspace at this location.",

@@ -58,28 +58,8 @@ pub trait LspClient: Send {
     ) -> Result<InitializeResult, Box<dyn Error + Send + Sync>> {
         debug!("Initializing LSP client with root path: {:?}", root_path);
         self.start_response_listener().await?;
-
         let workspace_folders = self.find_workspace_folders(root_path.clone()).await?;
-        debug!("Found workspace folders: {:?}", workspace_folders);
-        let mut capabilities = ClientCapabilities::default();
-        capabilities.text_document = Some(TextDocumentClientCapabilities {
-            document_symbol: Some(DocumentSymbolClientCapabilities {
-                hierarchical_document_symbol_support: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-
-        capabilities.experimental = Some(serde_json::json!({
-            "serverStatusNotification": true
-        }));
-
-        let params = InitializeParams {
-            capabilities,
-            workspace_folders: Some(workspace_folders.clone()),
-            root_uri: Some(workspace_folders[0].uri.clone()),
-            ..Default::default()
-        };
+        let params = self.get_initialize_params(workspace_folders);
 
         let result = self
             .send_request("initialize", Some(serde_json::to_value(params)?))
@@ -214,7 +194,6 @@ pub trait LspClient: Send {
                 Some(serde_json::to_value(params)?),
             )
             .await?;
-
         let goto_resp: GotoDefinitionResponse = serde_json::from_value(result)?;
         debug!("Received goto definition response");
         Ok(goto_resp)
@@ -411,5 +390,31 @@ pub trait LspClient: Send {
         }
 
         Ok(workspace_folders.into_iter().collect())
+    }
+
+    fn get_initialize_params(
+        &mut self,
+        workspace_folders: Vec<WorkspaceFolder>,
+    ) -> InitializeParams {
+        let mut capabilities = ClientCapabilities::default();
+        capabilities.text_document = Some(TextDocumentClientCapabilities {
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                hierarchical_document_symbol_support: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        capabilities.experimental = Some(serde_json::json!({
+            "serverStatusNotification": true
+        }));
+
+        let params = InitializeParams {
+            capabilities,
+            workspace_folders: Some(workspace_folders.clone()),
+            root_uri: Some(workspace_folders[0].uri.clone()),
+            ..Default::default()
+        };
+        params
     }
 }

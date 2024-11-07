@@ -1,11 +1,8 @@
-
-
-
 use crate::api_types::{ErrorResponse, FileRange};
 use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
 use log::{error, info};
-use lsp_types::{Range, Position as LspPosition};
+use lsp_types::{Position as LspPosition, Range};
 use serde::Serialize;
 use utoipa::ToSchema;
 

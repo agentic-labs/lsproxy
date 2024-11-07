@@ -1,14 +1,18 @@
-use std::{path::Path, process::Stdio};
+use std::error::Error;
+use std::path::Path;
+use std::process::Stdio;
 
 use async_trait::async_trait;
+use log::debug;
 use notify_debouncer_mini::DebouncedEvent;
 use tokio::process::Command;
 use tokio::sync::broadcast::Receiver;
+use url::Url;
 
 use crate::lsp::{JsonRpcHandler, LspClient, PendingRequests, ProcessHandler};
 
 use crate::utils::workspace_documents::{
-    WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS, PYRIGHT_FILE_PATTERNS, PYRIGHT_ROOT_FILES,
+    WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS, PYRIGHT_FILE_PATTERNS, PYRIGHT_ROOT_FILES
 };
 
 pub struct PyrightClient {
@@ -39,6 +43,7 @@ impl LspClient for PyrightClient {
     fn get_pending_requests(&mut self) -> &mut PendingRequests {
         &mut self.pending_requests
     }
+
 }
 
 impl PyrightClient {
