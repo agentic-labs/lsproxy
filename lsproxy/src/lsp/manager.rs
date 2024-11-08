@@ -180,7 +180,7 @@ impl Manager {
         let full_path_str = full_path.to_str().unwrap_or_default();
         let ast_grep_result = self
             .ast_grep
-            .get_file_symbols(full_path_str)
+            .get_file_matches(full_path_str)
             .await
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
@@ -206,7 +206,7 @@ impl Manager {
         let full_path_str = full_path.to_str().unwrap_or_default();
         let ast_grep_result = self
             .ast_grep
-            .get_file_symbols(full_path_str)
+            .get_file_matches(full_path_str)
             .await
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
@@ -559,12 +559,13 @@ mod tests {
             .manager
             .as_ref()
             .ok_or("Manager is not initialized")?;
+        sleep(Duration::from_secs(10)).await;
         let def_response = manager
             .find_definition(
-                "main.py",
+                "search.py",
                 lsp_types::Position {
-                    line: 1,
-                    character: 18,
+                    line: 33,
+                    character: 32,
                 },
             )
             .await?;

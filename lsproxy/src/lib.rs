@@ -50,6 +50,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::find_references,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::find_referenced_definitions,
     ),
     components(
         schemas(

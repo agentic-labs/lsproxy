@@ -8,7 +8,7 @@ pub struct AstGrepClient {
 }
 
 impl AstGrepClient {
-    pub async fn get_file_symbols(
+    pub async fn get_file_matches(
         &self,
         file_name: &str,
     ) -> Result<Vec<AstGrepMatch>, Box<dyn std::error::Error>> {

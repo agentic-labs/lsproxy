@@ -194,7 +194,20 @@ pub trait LspClient: Send {
                 Some(serde_json::to_value(params)?),
             )
             .await?;
-        let goto_resp: GotoDefinitionResponse = serde_json::from_value(result)?;
+        let goto_resp: GotoDefinitionResponse = match serde_json::from_value(result.clone()) {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!(
+                    "Failed to parse goto definition response: {:?}, result: {:?}, position: {:?}",
+                    e, result, position
+                );
+                return Err(format!(
+                    "Failed to parse goto definition response: {:?}, result: {:?}, position: {:?}, path: {:?}",
+                    e, result, position, file_path
+                )
+                .into());
+            }
+        };
         debug!("Received goto definition response");
         Ok(goto_resp)
     }
@@ -406,9 +419,9 @@ pub trait LspClient: Send {
             ..Default::default()
         });
 
-        capabilities.experimental = Some(serde_json::json!({
-            "serverStatusNotification": true
-        }));
+        // capabilities.experimental = Some(serde_json::json!({
+        //     "serverStatusNotification": true
+        // }));
 
         let params = InitializeParams {
             capabilities,
