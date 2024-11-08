@@ -8,6 +8,7 @@ use crate::utils::workspace_documents::{
     WorkspaceDocuments, DEFAULT_EXCLUDE_PATTERNS, PYRIGHT_FILE_PATTERNS,
     RUST_ANALYZER_FILE_PATTERNS, TYPESCRIPT_FILE_PATTERNS,
 };
+use itertools::Itertools;
 use log::{debug, error, warn};
 use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
@@ -182,8 +183,61 @@ impl Manager {
             .ast_grep
             .get_file_symbols(full_path_str)
             .await
-            .map_err(|e| LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e)));
-        ast_grep_result
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
+            })?;
+        let filtered_result = ast_grep_result
+            .into_iter()
+            .filter(|m| !m.rule_id.ends_with("call"))
+            .collect();
+        Ok(filtered_result)
+    }
+
+    pub async fn find_referenced_symbols_in_file(
+        &self,
+        file_path: &str,
+    ) -> Result<Vec<AstGrepMatch>, LspManagerError> {
+        let workspace_files = self.list_files().await.map_err(|e| {
+            LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
+        })?;
+        if !workspace_files.iter().any(|f| f == file_path) {
+            return Err(LspManagerError::FileNotFound(file_path.to_string()));
+        }
+        let full_path = get_mount_dir().join(&file_path);
+        let full_path_str = full_path.to_str().unwrap_or_default();
+        let ast_grep_result = self
+            .ast_grep
+            .get_file_symbols(full_path_str)
+            .await
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
+            })?;
+        let filtered_result = ast_grep_result
+            .into_iter()
+            .filter(|m| m.rule_id.ends_with("call"))
+            .collect();
+        Ok(filtered_result)
+    }
+
+    pub async fn find_references_in_range(
+        &self,
+        file_path: &str,
+        range: Range,
+    ) -> Result<Vec<AstGrepMatch>, LspManagerError> {
+        let references_in_file: Vec<AstGrepMatch> =
+            self.find_referenced_symbols_in_file(file_path).await?;
+        let references_in_range: Vec<AstGrepMatch> = references_in_file
+            .into_iter()
+            .filter(|m| {
+                (range.start.line < m.range.start.line as u32
+                    || (range.start.line == m.range.start.line as u32
+                        && range.start.character <= m.range.start.column as u32))
+                    && (range.end.line > m.range.end.line as u32
+                        || (range.end.line == m.range.end.line as u32
+                            && range.end.character >= m.range.end.column as u32))
+            })
+            .collect();
+        Ok(references_in_range)
     }
 
     pub async fn find_definition(

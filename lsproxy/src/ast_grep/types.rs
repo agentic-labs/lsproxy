@@ -29,6 +29,16 @@ impl AstGrepMatch {
             .last()
             .map(|s| s.text.clone())
     }
+
+    pub fn get_identifier_position(&self) -> FilePosition {
+        FilePosition {
+            path: absolute_path_to_relative_path_string(&PathBuf::from(self.file.clone())),
+            position: Position {
+                line: self.range.start.line as u32,
+                character: self.range.start.column as u32,
+            },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -92,13 +102,7 @@ impl From<AstGrepMatch> for Symbol {
         Symbol {
             name: ast_match.text.clone(),
             kind: ast_match.rule_id.clone(),
-            identifier_position: FilePosition {
-                path: path.clone(),
-                position: Position {
-                    line: ast_match.range.start.line as u32,
-                    character: ast_match.range.start.column as u32,
-                },
-            },
+            identifier_position: ast_match.get_identifier_position(),
             range: FileRange {
                 path: path.clone(),
                 start: Position {

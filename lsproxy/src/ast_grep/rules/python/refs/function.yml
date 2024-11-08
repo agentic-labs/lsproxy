@@ -1,0 +1,10 @@
+id: function-call
+language: python
+rule:
+    kind: identifier
+    inside:
+      any:
+        - kind: call
+        - kind: attribute
+          inside:
+            kind: call

@@ -4,7 +4,7 @@ use actix_web::{
     App, HttpServer,
 };
 use api_types::{CodeContext, ErrorResponse, FileRange, Position};
-use handlers::read_source_code;
+use handlers::{find_referenced_definitions, read_source_code};
 use log::warn;
 use std::fs;
 use std::fs::File;
@@ -170,6 +170,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(post().to(find_references))),
                 ("/symbol/definitions-in-file", Some(Method::Get)) =>
                     api_scope.service(resource(path).route(get().to(definitions_in_file))),
+                ("/symbol/find-referenced-definitions", Some(Method::Post)) =>
+                    api_scope.service(resource(path).route(post().to(find_referenced_definitions))),
                 ("/workspace/list-files", Some(Method::Get)) =>
                     api_scope.service(resource(path).route(get().to(list_files))),
                 ("/workspace/read-source-code", Some(Method::Post)) =>
