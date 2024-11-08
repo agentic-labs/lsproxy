@@ -231,8 +231,7 @@ pub trait LspClient: Send {
         }
     }
 
-    #[allow(unused)]
-    #[deprecated(note = "Use ast grep instead")]
+    #[allow(unused)] // using ast grep instead
     async fn text_document_symbols(
         &mut self,
         file_path: &str,

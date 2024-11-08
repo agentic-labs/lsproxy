@@ -8,7 +8,6 @@ use crate::utils::workspace_documents::{
     WorkspaceDocuments, DEFAULT_EXCLUDE_PATTERNS, PYRIGHT_FILE_PATTERNS,
     RUST_ANALYZER_FILE_PATTERNS, TYPESCRIPT_FILE_PATTERNS,
 };
-use itertools::Itertools;
 use log::{debug, error, warn};
 use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
