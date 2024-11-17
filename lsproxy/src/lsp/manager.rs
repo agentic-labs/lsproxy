@@ -334,8 +334,15 @@ impl Manager {
         position: Position,
         new_name: String,
     ) -> Result<WorkspaceEdit, LspManagerError> {
-        let client = self.get_client(self.detect_language(file_path)?).ok_or(
-            LspManagerError::LspClientNotFound(self.detect_language(file_path)?),
+        let detected_language = self.detect_language(file_path)?;
+        if detected_language != SupportedLanguages::Java {
+            return Err(LspManagerError::UnsupportedFileType(format!(
+                "Renames are only supported for Java, got: {:?}",
+                detected_language
+            )));
+        }
+        let client = self.get_client(detected_language).ok_or(
+            LspManagerError::LspClientNotFound(detected_language),
         )?;
         let mut locked_client = client.lock().await;
         let full_path = get_mount_dir().join(&file_path);
