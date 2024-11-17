@@ -112,8 +112,10 @@ pub async fn initialize_app_state_with_mount_dir(
 
     let host = env::var("LSPROXY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("LSPROXY_PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
+        .and_then(|p| p.parse::<u16>().map_err(|_| {
+            warn!("Invalid port number in LSPROXY_PORT, using default 4444");
+            4444
+        }).ok())
         .unwrap_or(4444);
 
     let app_state = Data::new(AppState { manager });
