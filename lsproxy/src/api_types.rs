@@ -1,8 +1,9 @@
 use log::warn;
-use lsp_types::{GotoDefinitionResponse, Location, LocationLink};
+use lsp_types::{GotoDefinitionResponse, Location, LocationLink, WorkspaceEdit};
 use serde::{Deserialize, Serialize};
 use serde_json::{to_value, Value};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
@@ -266,6 +267,49 @@ pub struct ReferencesResponse {
 }
 
 pub type SymbolResponse = Vec<Symbol>;
+
+#[derive(Deserialize, ToSchema, IntoParams)]
+pub struct RenameRequest {
+    pub position: FilePosition,
+    pub new_name: String,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RenameResponse {
+    pub changes: HashMap<String, Vec<TextEdit>>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TextEdit {
+    pub range: FileRange,
+    pub new_text: String,
+}
+
+impl From<WorkspaceEdit> for RenameResponse {
+    fn from(edit: WorkspaceEdit) -> Self {
+        let changes = edit
+            .changes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(uri, edits)| {
+                let path = uri_to_relative_path_string(&uri);
+                let edits = edits
+                    .into_iter()
+                    .map(|edit| TextEdit {
+                        range: FileRange {
+                            path: path.clone(),
+                            start: edit.range.start.into(),
+                            end: edit.range.end.into(),
+                        },
+                        new_text: edit.new_text,
+                    })
+                    .collect();
+                (path, edits)
+            })
+            .collect();
+        RenameResponse { changes }
+    }
+}
 
 impl From<(GotoDefinitionResponse, Option<Vec<CodeContext>>, bool)> for DefinitionResponse {
     fn from(

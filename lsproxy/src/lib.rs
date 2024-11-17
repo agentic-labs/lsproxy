@@ -3,9 +3,12 @@ use actix_web::{
     web::{get, post, resource, scope, Data},
     App, HttpServer,
 };
-use api_types::{CodeContext, ErrorResponse, FileRange, Position};
-use handlers::read_source_code;
+use api_types::{
+    CodeContext, ErrorResponse, FileRange, Position, RenameRequest, RenameResponse, TextEdit,
+};
+use handlers::{read_source_code, rename};
 use log::warn;
+use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -50,6 +53,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::find_references,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::rename,
     ),
     components(
         schemas(
@@ -66,6 +70,9 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             ErrorResponse,
             CodeContext,
             FileRange,
+            RenameRequest,
+            RenameResponse,
+            TextEdit,
         )
     ),
     tags(
@@ -103,7 +110,15 @@ pub async fn initialize_app_state_with_mount_dir(
         .start_langservers(&mount_dir)
         .await?;
 
-    Ok(Data::new(AppState { manager }))
+    let host = env::var("LSPROXY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("LSPROXY_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(4444);
+
+    let app_state = Data::new(AppState { manager });
+    run_server_with_port_and_host(app_state.clone(), port, &host).await?;
+    Ok(app_state)
 }
 
 // Helper enum for cleaner matching
@@ -174,6 +189,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(get().to(list_files))),
                 ("/workspace/read-source-code", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(read_source_code))),
+                ("/symbol/rename", Some(Method::Post)) =>
+                    api_scope.service(resource(path).route(post().to(rename))),
                 (p, m) => panic!(
                     "Invalid path configuration for {}: {:?}. Ensure the OpenAPI spec matches your handlers.", 
                     p,

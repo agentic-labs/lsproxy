@@ -65,7 +65,7 @@ impl LspClient for JdtlsClient {
                 message: "ServiceReady".to_string(),
             })
             .await?;
-        debug!("Java: waiting for service ready notification.This may take a minute...");
+        debug!("Java: waiting for service ready notification. This may take a minute...");
         tokio::time::timeout(std::time::Duration::from_secs(180), notification_rx.recv()).await??;
         Ok(init_result)
     }

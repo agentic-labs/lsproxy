@@ -6,12 +6,14 @@ use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, InitializeResult, Location, PartialResultParams, Position,
-    PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentIdentifier, TextDocumentPositionParams, Url,
-    WorkDoneProgressParams, WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams, GotoDefinitionParams,
+    GotoDefinitionResponse, InitializeParams, InitializeResult, Location, PartialResultParams,
+    Position, PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams,
+    RenameParams, TagSupport, TextDocumentClientCapabilities, TextDocumentIdentifier,
+    TextDocumentPositionParams, Url, WorkDoneProgressParams, WorkspaceEdit, WorkspaceFolder,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
+use serde_json::Value;
 use std::error::Error;
 use std::path::Path;
 
@@ -413,5 +415,49 @@ pub trait LspClient: Send {
         }
 
         Ok(workspace_folders.into_iter().collect())
+    }
+
+    async fn workspace_execute_command(
+        &mut self,
+        command: &str,
+        // command args are flexible in LSP
+        // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#executeCommandParams
+        // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#lspAny
+        // so we have a serde_json::Value here
+        args: Vec<Value>,
+    ) -> Result<Value, Box<dyn Error + Send + Sync>> {
+        let params = ExecuteCommandParams {
+            command: command.to_string(),
+            arguments: args,
+            ..Default::default()
+        };
+        self.send_request(
+            "workspace/executeCommand",
+            Some(serde_json::to_value(params)?),
+        )
+        .await
+    }
+
+    async fn text_document_rename(
+        &mut self,
+        file_path: &str,
+        position: Position,
+        new_name: String,
+    ) -> Result<WorkspaceEdit, Box<dyn Error + Send + Sync>> {
+        let params = RenameParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::from_file_path(file_path).unwrap(),
+                },
+                position,
+            },
+            new_name,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        let result = self
+            .send_request("textDocument/rename", Some(serde_json::to_value(params)?))
+            .await?;
+        let workspace_edit: WorkspaceEdit = serde_json::from_value(result)?;
+        Ok(workspace_edit)
     }
 }

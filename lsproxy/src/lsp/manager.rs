@@ -11,7 +11,9 @@ use crate::utils::workspace_documents::{
     PYTHON_FILE_PATTERNS, RUST_ANALYZER_FILE_PATTERNS, TYPESCRIPT_FILE_PATTERNS,
 };
 use log::{debug, error, warn};
-use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range};
+use lsp_types::{
+    DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range, WorkspaceEdit,
+};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
@@ -324,6 +326,25 @@ impl Manager {
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Source code retrieval failed: {}", e))
             })
+    }
+
+    pub async fn rename_symbol(
+        &self,
+        file_path: &str,
+        position: Position,
+        new_name: String,
+    ) -> Result<WorkspaceEdit, LspManagerError> {
+        let client = self.get_client(self.detect_language(file_path)?).ok_or(
+            LspManagerError::LspClientNotFound(self.detect_language(file_path)?),
+        )?;
+        let mut locked_client = client.lock().await;
+        let full_path = get_mount_dir().join(&file_path);
+        let full_path_str = full_path.to_str().unwrap_or_default();
+
+        locked_client
+            .text_document_rename(full_path_str, position, new_name)
+            .await
+            .map_err(|e| LspManagerError::InternalError(format!("Rename symbol failed: {}", e)))
     }
 }
 
