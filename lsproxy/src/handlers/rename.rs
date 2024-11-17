@@ -21,19 +21,14 @@ use crate::{
     )
 )]
 pub async fn rename(data: Data<AppState>, info: Json<RenameRequest>) -> HttpResponse {
-    let manager = data
-        .manager
-        .lock()
-        .map_err(|e| {
-            HttpResponse::InternalServerError().json(ErrorResponse {
-                error: format!("Failed to lock manager: {}", e),
-            })
-        })
-        .unwrap_or_else(|_| {
+    let manager = match data.manager.lock() {
+        Ok(manager) => manager,
+        Err(e) => {
             return HttpResponse::InternalServerError().json(ErrorResponse {
-                error: "Failed to acquire manager lock".to_string(),
+                error: format!("Failed to lock manager: {}", e),
             });
-        });
+        }
+    };
 
     let result = manager
         .rename_symbol(
