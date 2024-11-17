@@ -447,7 +447,9 @@ pub trait LspClient: Send {
         let params = RenameParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(file_path).unwrap(),
+                    uri: Url::from_file_path(file_path).unwrap_or_else(|_| {
+                        panic!("Invalid file path: {}", file_path);
+                    }),
                 },
                 position,
             },
