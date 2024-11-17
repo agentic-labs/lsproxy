@@ -29,7 +29,11 @@ pub async fn rename(data: Data<AppState>, info: Json<RenameRequest>) -> HttpResp
                 error: format!("Failed to lock manager: {}", e),
             })
         })
-        .unwrap();
+        .unwrap_or_else(|_| {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: "Failed to acquire manager lock".to_string(),
+            });
+        });
 
     let result = manager
         .rename_symbol(
