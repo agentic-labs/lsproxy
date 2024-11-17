@@ -134,6 +134,42 @@
         }
       }
     },
+    "/symbol/rename": {
+      "post": {
+        "tags": [
+          "symbol"
+        ],
+        "operationId": "rename",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Symbol renamed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/workspace/list-files": {
       "get": {
         "tags": [
@@ -423,6 +459,41 @@
           }
         }
       },
+      "RenameRequest": {
+        "type": "object",
+        "required": [
+          "position",
+          "new_name"
+        ],
+        "properties": {
+          "new_name": {
+            "type": "string"
+          },
+          "position": {
+            "$ref": "#/components/schemas/FilePosition"
+          }
+        }
+      },
+      "RenameResponse": {
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/TextEdit"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "SupportedLanguages": {
         "type": "string",
         "enum": [
@@ -459,6 +530,21 @@
           "range": {
             "$ref": "#/components/schemas/FileRange",
             "description": "The full range of the symbol."
+          }
+        }
+      },
+      "TextEdit": {
+        "type": "object",
+        "required": [
+          "range",
+          "new_text"
+        ],
+        "properties": {
+          "new_text": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/components/schemas/FileRange"
           }
         }
       },
