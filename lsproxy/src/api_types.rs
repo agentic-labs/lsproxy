@@ -288,29 +288,32 @@ pub struct TextEdit {
 impl From<WorkspaceEdit> for RenameResponse {
     fn from(edit: WorkspaceEdit) -> Self {
         let changes = match edit.changes {
-            Some(changes) => changes,
+            Some(changes) => changes
+                .into_iter()
+                .map(|(uri, edits)| {
+                    let path = uri_to_relative_path_string(&uri);
+                    let edits = edits
+                        .into_iter()
+                        .map(|edit| TextEdit {
+                            range: FileRange {
+                                path: path.clone(),
+                                start: edit.range.start.into(),
+                                end: edit.range.end.into(),
+                            },
+                            new_text: edit.new_text,
+                        })
+                        .collect();
+                    (path, edits)
+                })
+                .collect(),
             None => {
                 warn!("No changes found in WorkspaceEdit");
-                return RenameResponse { changes: HashMap::new() };
+                return RenameResponse {
+                    changes: HashMap::new(),
+                };
             }
         };
-            .into_iter()
-            .map(|(uri, edits)| {
-                let path = uri_to_relative_path_string(&uri);
-                let edits = edits
-                    .into_iter()
-                    .map(|edit| TextEdit {
-                        range: FileRange {
-                            path: path.clone(),
-                            start: edit.range.start.into(),
-                            end: edit.range.end.into(),
-                        },
-                        new_text: edit.new_text,
-                    })
-                    .collect();
-                (path, edits)
-            })
-            .collect();
+
         RenameResponse { changes }
     }
 }

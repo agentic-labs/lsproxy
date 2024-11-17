@@ -341,9 +341,9 @@ impl Manager {
                 detected_language
             )));
         }
-        let client = self.get_client(detected_language).ok_or(
-            LspManagerError::LspClientNotFound(detected_language),
-        )?;
+        let client = self
+            .get_client(detected_language)
+            .ok_or(LspManagerError::LspClientNotFound(detected_language))?;
         let mut locked_client = client.lock().await;
         let full_path = get_mount_dir().join(&file_path);
         let full_path_str = full_path.to_str().unwrap_or_default();
