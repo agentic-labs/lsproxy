@@ -341,8 +341,8 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_run_server() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn test_run_server() -> Result<(), Box<dyn std::error::Error>> {
         let test_path = js_sample_path();
         let (tx, rx) = mpsc::channel();
 
