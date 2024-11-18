@@ -8,7 +8,6 @@ use api_types::{
 };
 use handlers::{read_source_code, rename};
 use log::warn;
-use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -110,21 +109,7 @@ pub async fn initialize_app_state_with_mount_dir(
         .start_langservers(&mount_dir)
         .await?;
 
-    let host = env::var("LSPROXY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = env::var("LSPROXY_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse::<u16>()
-                .map_err(|_| {
-                    warn!("Invalid port number in LSPROXY_PORT, using default 4444");
-                })
-                .ok()
-        })
-        .unwrap_or(4444);
-
-    let app_state = Data::new(AppState { manager });
-    run_server_with_port_and_host(app_state.clone(), port, &host).await?;
-    Ok(app_state)
+    Ok(Data::new(AppState { manager }))
 }
 
 // Helper enum for cleaner matching
