@@ -6,14 +6,12 @@ use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams, GotoDefinitionParams,
-    GotoDefinitionResponse, InitializeParams, InitializeResult, Location, PartialResultParams,
-    Position, PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams,
-    RenameParams, TagSupport, TextDocumentClientCapabilities, TextDocumentIdentifier,
-    TextDocumentPositionParams, Url, WorkDoneProgressParams, WorkspaceEdit, WorkspaceFolder,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
+    PartialResultParams, Position, PublishDiagnosticsClientCapabilities, ReferenceContext,
+    ReferenceParams, RenameParams, TagSupport, TextDocumentClientCapabilities,
+    TextDocumentIdentifier, TextDocumentPositionParams, Url, WorkDoneProgressParams, WorkspaceEdit,
+    WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
-use serde_json::Value;
 use std::error::Error;
 use std::path::Path;
 
@@ -254,31 +252,6 @@ pub trait LspClient: Send {
         }
     }
 
-    async fn text_document_symbols(
-        &mut self,
-        file_path: &str,
-    ) -> Result<DocumentSymbolResponse, Box<dyn Error + Send + Sync>> {
-        debug!("Requesting document symbols for {}", file_path);
-        let params = DocumentSymbolParams {
-            text_document: TextDocumentIdentifier {
-                uri: Url::from_file_path(file_path).unwrap(),
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        };
-
-        let result = self
-            .send_request(
-                "textDocument/documentSymbol",
-                Some(serde_json::to_value(params)?),
-            )
-            .await?;
-
-        let symbols: DocumentSymbolResponse = serde_json::from_value(result)?;
-        debug!("Received document symbols response");
-        Ok(symbols)
-    }
-
     async fn text_document_reference(
         &mut self,
         file_path: &str,
@@ -415,27 +388,6 @@ pub trait LspClient: Send {
         }
 
         Ok(workspace_folders.into_iter().collect())
-    }
-
-    async fn workspace_execute_command(
-        &mut self,
-        command: &str,
-        // command args are flexible in LSP
-        // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#executeCommandParams
-        // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#lspAny
-        // so we have a serde_json::Value here
-        args: Vec<Value>,
-    ) -> Result<Value, Box<dyn Error + Send + Sync>> {
-        let params = ExecuteCommandParams {
-            command: command.to_string(),
-            arguments: args,
-            ..Default::default()
-        };
-        self.send_request(
-            "workspace/executeCommand",
-            Some(serde_json::to_value(params)?),
-        )
-        .await
     }
 
     async fn text_document_rename(
