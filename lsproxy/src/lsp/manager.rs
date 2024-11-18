@@ -11,7 +11,7 @@ use crate::utils::workspace_documents::{
     PYTHON_FILE_PATTERNS, RUST_ANALYZER_FILE_PATTERNS, TYPESCRIPT_FILE_PATTERNS,
 };
 use log::{debug, error, warn};
-use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range};
+use lsp_types::{GotoDefinitionResponse, Location, Position, Range, WorkspaceEdit};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
@@ -167,29 +167,6 @@ impl Manager {
         Ok(())
     }
 
-    #[deprecated(note = "Use definitions_in_file_ast_grep instead")]
-    pub async fn definitions_in_file(
-        &self,
-        file_path: &str,
-    ) -> Result<DocumentSymbolResponse, LspManagerError> {
-        // Check if the file_path is included in the workspace files
-        let workspace_files = self.list_files().await?;
-        if !workspace_files.iter().any(|f| f == file_path) {
-            return Err(LspManagerError::FileNotFound(file_path.to_string()));
-        }
-        let full_path = get_mount_dir().join(&file_path);
-        let full_path_str = full_path.to_str().unwrap_or_default();
-        let lsp_type = self.detect_language(full_path_str)?;
-        let client = self
-            .get_client(lsp_type)
-            .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
-        let mut locked_client = client.lock().await;
-        locked_client
-            .text_document_symbols(full_path_str)
-            .await
-            .map_err(|e| LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e)))
-    }
-
     pub async fn definitions_in_file_ast_grep(
         &self,
         file_path: &str,
@@ -324,6 +301,32 @@ impl Manager {
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Source code retrieval failed: {}", e))
             })
+    }
+
+    pub async fn rename_symbol(
+        &self,
+        file_path: &str,
+        position: Position,
+        new_name: String,
+    ) -> Result<WorkspaceEdit, LspManagerError> {
+        let detected_language = self.detect_language(file_path)?;
+        if detected_language != SupportedLanguages::Java {
+            return Err(LspManagerError::UnsupportedFileType(format!(
+                "Renames are only supported for Java, got: {:?}",
+                detected_language
+            )));
+        }
+        let client = self
+            .get_client(detected_language)
+            .ok_or(LspManagerError::LspClientNotFound(detected_language))?;
+        let mut locked_client = client.lock().await;
+        let full_path = get_mount_dir().join(&file_path);
+        let full_path_str = full_path.to_str().unwrap_or_default();
+
+        locked_client
+            .text_document_rename(full_path_str, position, new_name)
+            .await
+            .map_err(|e| LspManagerError::InternalError(format!("Rename symbol failed: {}", e)))
     }
 }
 

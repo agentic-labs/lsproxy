@@ -3,8 +3,10 @@ use actix_web::{
     web::{get, post, resource, scope, Data},
     App, HttpServer,
 };
-use api_types::{CodeContext, ErrorResponse, FileRange, Position};
-use handlers::read_source_code;
+use api_types::{
+    CodeContext, ErrorResponse, FileRange, Position, RenameRequest, RenameResponse, TextEdit,
+};
+use handlers::{read_source_code, rename};
 use log::warn;
 use std::fs;
 use std::fs::File;
@@ -50,6 +52,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::find_references,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::rename,
     ),
     components(
         schemas(
@@ -66,6 +69,9 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             ErrorResponse,
             CodeContext,
             FileRange,
+            RenameRequest,
+            RenameResponse,
+            TextEdit,
         )
     ),
     tags(
@@ -174,6 +180,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(get().to(list_files))),
                 ("/workspace/read-source-code", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(read_source_code))),
+                ("/symbol/rename", Some(Method::Post)) =>
+                    api_scope.service(resource(path).route(post().to(rename))),
                 (p, m) => panic!(
                     "Invalid path configuration for {}: {:?}. Ensure the OpenAPI spec matches your handlers.", 
                     p,
@@ -318,8 +326,8 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_run_server() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn test_run_server() -> Result<(), Box<dyn std::error::Error>> {
         let test_path = js_sample_path();
         let (tx, rx) = mpsc::channel();
 
