@@ -868,7 +868,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_file_symbols_java() -> Result<(), Box<dyn std::error::Error>> {
         let context = TestContext::setup(&java_sample_path(), true).await?;
         let manager = context
@@ -1022,7 +1022,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_references_java() -> Result<(), Box<dyn std::error::Error>> {
         let context = TestContext::setup(&java_sample_path(), true).await?;
         let manager = context
@@ -1085,7 +1085,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_definition_java() -> Result<(), Box<dyn std::error::Error>> {
         let context = TestContext::setup(&java_sample_path(), true).await?;
         let manager = context

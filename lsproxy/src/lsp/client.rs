@@ -36,6 +36,7 @@ pub trait LspClient: Send {
         let init_result: InitializeResult = serde_json::from_value(result)?;
         debug!("Initialization successful: {:?}", init_result);
         self.send_initialized().await?;
+        self.wait_for_ready().await?;
         Ok(init_result)
     }
 
@@ -413,5 +414,9 @@ pub trait LspClient: Send {
         }
 
         Ok(workspace_folders.into_iter().collect())
+    }
+
+    async fn wait_for_ready(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        Ok(())
     }
 }

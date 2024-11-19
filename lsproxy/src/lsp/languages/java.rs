@@ -2,7 +2,6 @@ use std::{error::Error, os::unix::fs::PermissionsExt, path::Path, process::Stdio
 
 use async_trait::async_trait;
 use log::debug;
-use lsp_types::InitializeResult;
 use notify_debouncer_mini::DebouncedEvent;
 use tokio::{process::Command, sync::broadcast::Receiver};
 
@@ -42,22 +41,7 @@ impl LspClient for JdtlsClient {
         &mut self.pending_requests
     }
 
-    async fn initialize(
-        &mut self,
-        root_path: String,
-    ) -> Result<InitializeResult, Box<dyn Error + Send + Sync>> {
-        debug!("Initializing LSP client with root path: {:?}", root_path);
-        self.start_response_listener().await?;
-
-        let params = self.get_initialize_params(root_path).await;
-
-        let result = self
-            .send_request("initialize", Some(serde_json::to_value(params)?))
-            .await?;
-        let init_result: InitializeResult = serde_json::from_value(result)?;
-        debug!("Initialization successful: {:?}", init_result);
-        self.send_initialized().await?;
-
+    async fn wait_for_ready(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut notification_rx = self
             .get_pending_requests()
             .add_notification(ExpectedMessageKey {
@@ -65,9 +49,36 @@ impl LspClient for JdtlsClient {
                 message: "ServiceReady".to_string(),
             })
             .await?;
-        debug!("Java: waiting for service ready notification.This may take a minute...");
-        tokio::time::timeout(std::time::Duration::from_secs(180), notification_rx.recv()).await??;
-        Ok(init_result)
+        
+        debug!("Java: waiting for service ready notification. This may take a minute...");
+        
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(180),
+            notification_rx.recv()
+        ).await {
+            Ok(Ok(_)) => {
+                debug!("Java LSP is ready.");
+                Ok(())
+            },
+            Ok(Err(e)) => {
+                self.get_pending_requests()
+                    .remove_notification(ExpectedMessageKey {
+                        method: "language/status".to_string(),
+                        message: "ServiceReady".to_string(),
+                    })
+                    .await;
+                Err(format!("Channel closed while waiting for Java LSP: {}", e).into())
+            },
+            Err(_) => {
+                self.get_pending_requests()
+                    .remove_notification(ExpectedMessageKey {
+                        method: "language/status".to_string(),
+                        message: "ServiceReady".to_string(),
+                    })
+                    .await;
+                Err("Timeout waiting for Java LSP to be ready (180s elapsed)".into())
+            }
+        }
     }
 }
 
