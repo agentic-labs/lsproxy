@@ -109,7 +109,8 @@ async fn fetch_definition_source_code(
     };
 
     for definition in definitions {
-        let relative_path = uri_to_relative_path_string(&definition.uri);
+        let relative_path = uri_to_relative_path_string(&definition.uri)
+            .map_err(|e| LspManagerError::InternalError(format!("Failed to convert URI: {}", e)))?;
         let file_symbols = manager.definitions_in_file_ast_grep(&relative_path).await?;
         let symbol = file_symbols.iter().find(|s| {
             s.range.start.line as u32 == definition.range.start.line

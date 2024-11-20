@@ -17,7 +17,7 @@ use log::{debug, error, warn};
 use lsp_types::{GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -253,6 +253,8 @@ impl Manager {
         if !workspace_files.iter().any(|f| f == relative_file_path) {
             return Err(LspManagerError::FileNotFound(relative_file_path.to_string()).into());
         }
+
+        // Get all symbol definitions in the target file
         let file_symbol_matches = self
             .definitions_in_file_ast_grep(relative_file_path)
             .await?;
@@ -260,15 +262,19 @@ impl Manager {
             .into_iter()
             .map(|s| Symbol::from(s))
             .collect();
+
+        // Find symbols in other files that reference our file's symbols
         let referencing_symbols = self.find_referencing_symbols(&file_symbols).await?;
 
+        // Get references to imported symbols and their definitions
         let (references_to_imports, definitions_of_references_to_imports) = self
             .find_definitions_of_imported_referenced_symbols(relative_file_path)
             .await?;
 
+        // For each symbol in our file, find which imported symbols it references
         let mut referenced_symbols = vec![];
-
         for symbol in &file_symbols {
+            // Find references that are enclosed within this symbol's range
             let enclosed_references: Vec<(usize, &AstGrepPatternMatch)> = references_to_imports
                 .iter()
                 .enumerate()
@@ -279,11 +285,15 @@ impl Manager {
                     })
                 })
                 .collect();
-            let references_symbols_for_defined_symbol: Vec<Symbol> = enclosed_references
+
+            // Get the definitions for those enclosed references
+            let referenced_symbols_for_defined_symbol: Vec<Symbol> = enclosed_references
                 .iter()
-                .map(|(i, _)| definitions_of_references_to_imports[*i].clone().unwrap())
+                .filter_map(|(i, _)| definitions_of_references_to_imports[*i].clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
                 .collect();
-            referenced_symbols.push(references_symbols_for_defined_symbol);
+            referenced_symbols.push(referenced_symbols_for_defined_symbol);
         }
 
         Ok(FileSymbolSubgraph {
@@ -340,10 +350,10 @@ impl Manager {
                 )
             }))
             .await;
-        let definitions_of_references_to_imports: Vec<Location> =
+        let definitions_of_references_to_imports: Vec<Option<Location>> =
             definitions_responses_for_references_to_imports
                 .into_iter()
-                .filter_map(|r| match r {
+                .map(|r| match r {
                     Ok(d) => match d {
                         GotoDefinitionResponse::Scalar(l) => Some(l.clone()),
                         GotoDefinitionResponse::Array(l) => l.first().cloned(),
@@ -361,20 +371,32 @@ impl Manager {
         let symbols_of_definitions_of_references_to_imports =
             futures::future::join_all(definitions_of_references_to_imports.iter().map(
                 |d| async move {
-                    let matches = self
-                        .definitions_in_file_ast_grep(&uri_to_relative_path_string(&d.uri))
-                        .await
-                        .unwrap();
-                    let target_match = matches.iter().find(|m| {
-                        m.range.start.line == d.range.start.line as usize
-                            && m.range.start.column as u32 == d.range.start.character
-                            && m.range.end.line == d.range.end.line as usize
-                            && m.range.end.column as u32 == d.range.end.character
-                    });
-                    target_match.map(|m| Symbol::from(m.clone()))
+                    if let Some(location) = d {
+                        let relative_path = uri_to_relative_path_string(&location.uri);
+                        if let Err(_) = relative_path {
+                            return None;
+                        }
+                        let matches = self
+                            .definitions_in_file_ast_grep(&relative_path.unwrap())
+                            .await
+                            .unwrap();
+                        let target_match = matches.iter().find(|m| {
+                            m.range.start.line == location.range.start.line as usize
+                                && m.range.start.column as u32 == location.range.start.character
+                                && m.range.end.line == location.range.end.line as usize
+                                && m.range.end.column as u32 == location.range.end.character
+                        });
+                        target_match.map(|m| Symbol::from(m.clone()))
+                    } else {
+                        None
+                    }
                 },
             ))
             .await;
+        assert_eq!(
+            references_to_imports.len(),
+            symbols_of_definitions_of_references_to_imports.len()
+        );
         Ok((
             references_to_imports,
             symbols_of_definitions_of_references_to_imports,
@@ -413,14 +435,18 @@ impl Manager {
         let mut referencing_symbols: Vec<Vec<Symbol>> = vec![];
         for (i, reference_list) in references_by_symbol.into_iter().enumerate() {
             let locations = reference_list?;
+            let mut referencing_symbols_for_symbol = vec![];
             for location in locations {
-                let relative_path = uri_to_relative_path_string(&location.uri);
+                let relative_path = uri_to_relative_path_string(&location.uri).map_err(|e| {
+                    LspManagerError::InternalError(format!("Failed to convert URI: {}", e))
+                })?;
                 let mut symbols = self
                     .find_symbols_enclosing_position(&relative_path, location.range.start)
                     .await?;
                 symbols.retain(|s| s != &file_symbols[i]);
-                referencing_symbols.push(symbols);
+                referencing_symbols_for_symbol.extend(symbols);
             }
+            referencing_symbols.push(referencing_symbols_for_symbol);
         }
         Ok(referencing_symbols)
     }
@@ -533,7 +559,7 @@ impl Manager {
                     .list_files()
                     .await
                     .iter()
-                    .filter_map(|f| Some(absolute_path_to_relative_path_string(f)))
+                    .filter_map(|f| absolute_path_to_relative_path_string(f).ok())
                     .collect::<Vec<String>>(),
             );
         }
@@ -619,8 +645,8 @@ mod tests {
     use super::*;
     use crate::api_types::{FilePosition, FileRange, Position, Symbol, SymbolResponse};
     use crate::test_utils::{
-        c_sample_path, cpp_sample_path, java_sample_path, js_sample_path,
-        python_sample_path, rust_sample_path, typescript_sample_path, TestContext,
+        c_sample_path, cpp_sample_path, java_sample_path, js_sample_path, python_sample_path,
+        rust_sample_path, typescript_sample_path, TestContext,
     };
     use lsp_types::{Range, Url};
 

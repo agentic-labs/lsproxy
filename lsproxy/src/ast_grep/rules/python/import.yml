@@ -9,3 +9,4 @@ rule:
         - kind: relative_import
         - kind: import_statement
       stopBy: end
+      pattern: $CONTEXT

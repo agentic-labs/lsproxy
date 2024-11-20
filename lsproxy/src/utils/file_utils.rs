@@ -1,6 +1,5 @@
 use crate::api_types::get_mount_dir;
 use ignore::WalkBuilder;
-use log::warn;
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -84,21 +83,20 @@ fn build_walk(path: &Path, exclude_patterns: Vec<String>) -> ignore::Walk {
     walk
 }
 
-pub fn uri_to_relative_path_string(uri: &Url) -> String {
-    let path = uri.to_file_path().unwrap_or_else(|e| {
-        warn!("Failed to convert URI to file path: {:?}", e);
-        PathBuf::from(uri.path())
-    });
-
+pub fn uri_to_relative_path_string(
+    uri: &Url,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let path = uri
+        .to_file_path()
+        .map_err(|()| "Failed to convert URI to file path")?;
     absolute_path_to_relative_path_string(&path)
 }
 
-pub fn absolute_path_to_relative_path_string(path: &PathBuf) -> String {
+pub fn absolute_path_to_relative_path_string(
+    path: &PathBuf,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mount_dir = get_mount_dir();
     path.strip_prefix(mount_dir)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|e| {
-            warn!("Failed to strip prefix from {:?}: {:?}", path, e);
-            path.to_string_lossy().into_owned()
-        })
+        .map_err(|e| format!("Failed to strip prefix from {:?}: {:?}", path, e).into())
 }

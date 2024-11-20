@@ -195,7 +195,7 @@ fn generate_compile_commands(
     )?;
 
     for path in all_files {
-        let relative_path = absolute_path_to_relative_path_string(&path);
+        let relative_path = absolute_path_to_relative_path_string(&path)?;
         let compiler = if is_cpp_file(&path) {
             "/usr/bin/c++"
         } else {

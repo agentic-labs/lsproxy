@@ -67,7 +67,7 @@ pub enum SupportedLanguages {
     Java,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema, Eq, Hash)]
 pub struct Position {
     /// 0-indexed line number.
     #[schema(example = 10)]
@@ -78,14 +78,14 @@ pub struct Position {
 }
 
 /// Specific position within a file.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema, Eq, Hash)]
 pub struct FilePosition {
     #[schema(example = "src/main.py")]
     pub path: String,
     pub position: Position,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema, Eq, Hash)]
 pub struct FileRange {
     /// The path to the file.
     #[schema(example = "src/main.py")]
@@ -138,7 +138,7 @@ pub struct CodeContext {
     pub source_code: String,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema, Eq, Hash)]
 pub struct Symbol {
     /// The name of the symbol.
     #[schema(example = "User")]
@@ -154,7 +154,7 @@ pub struct Symbol {
     pub range: FileRange,
 }
 
-#[derive(Deserialize, ToSchema, IntoParams)]
+#[derive(Deserialize, ToSchema, IntoParams, Eq, Hash, PartialEq)]
 pub struct GetDefinitionRequest {
     pub position: FilePosition,
 
@@ -341,7 +341,7 @@ impl From<(Vec<Location>, Option<Vec<CodeContext>>, bool)> for ReferencesRespons
 impl From<Location> for FilePosition {
     fn from(location: Location) -> Self {
         FilePosition {
-            path: uri_to_relative_path_string(&location.uri),
+            path: uri_to_relative_path_string(&location.uri).unwrap(),
             position: Position {
                 line: location.range.start.line,
                 character: location.range.start.character,
@@ -353,7 +353,7 @@ impl From<Location> for FilePosition {
 impl From<LocationLink> for FilePosition {
     fn from(link: LocationLink) -> Self {
         FilePosition {
-            path: uri_to_relative_path_string(&link.target_uri),
+            path: uri_to_relative_path_string(&link.target_uri).unwrap(),
             position: Position {
                 line: link.target_range.start.line,
                 character: link.target_range.start.character,

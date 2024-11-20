@@ -105,7 +105,8 @@ pub struct Label {
 
 impl From<AstGrepRuleMatch> for Symbol {
     fn from(ast_match: AstGrepRuleMatch) -> Self {
-        let path = absolute_path_to_relative_path_string(&PathBuf::from(ast_match.file.clone()));
+        let path =
+            absolute_path_to_relative_path_string(&PathBuf::from(ast_match.file.clone())).unwrap();
         Symbol {
             name: ast_match.meta_variables.single.name.text.clone(),
             kind: ast_match.rule_id.clone(),

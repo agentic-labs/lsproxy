@@ -67,10 +67,15 @@ pub async fn find_references(
             Ok(files) => {
                 let mut filtered_refs: Vec<_> = refs
                     .into_iter()
-                    .filter(|reference| {
-                        let path = uri_to_relative_path_string(&reference.uri);
-                        files.contains(&path)
-                    })
+                    .filter(
+                        |reference| match uri_to_relative_path_string(&reference.uri) {
+                            Ok(path) => files.contains(&path),
+                            Err(e) => {
+                                error!("Failed to convert URI: {}", e);
+                                false
+                            }
+                        },
+                    )
                     .collect();
 
                 filtered_refs.sort_by(|a, b| {
@@ -165,15 +170,14 @@ async fn fetch_code_context(
                 character: 0,
             },
         };
-        match manager
-            .read_source_code(&uri_to_relative_path_string(&reference.uri), Some(range))
-            .await
-        {
+        let relative_path = uri_to_relative_path_string(&reference.uri)
+            .map_err(|e| LspManagerError::InternalError(format!("Failed to convert URI: {}", e)))?;
+        match manager.read_source_code(&relative_path, Some(range)).await {
             Ok(source_code) => {
                 code_contexts.push(CodeContext {
                     source_code,
                     range: FileRange {
-                        path: uri_to_relative_path_string(&reference.uri),
+                        path: relative_path,
                         start: Position {
                             line: range.start.line,
                             character: 0,
