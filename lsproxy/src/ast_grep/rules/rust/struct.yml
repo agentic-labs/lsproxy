@@ -1,6 +1,8 @@
 id: struct
 language: rust
 rule:
+    pattern: $NAME
     kind: type_identifier
     inside:
       kind: struct_item
+      pattern: $CONTEXT

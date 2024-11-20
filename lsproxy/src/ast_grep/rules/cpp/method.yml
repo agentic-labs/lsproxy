@@ -1,9 +1,0 @@
-id: method
-language: cpp
-rule:
-  kind: identifier
-  inside:
-    kind: qualified_identifier
-    name: name
-    inside:
-      kind: function_declarator

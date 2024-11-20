@@ -1,6 +1,7 @@
 id: function
 language: tsx
 rule:
+  pattern: $NAME
   any:
     - kind: identifier
       inside:
@@ -19,8 +20,10 @@ rule:
           - kind: assignment_expression
             has:
               kind: arrow_function
+        pattern: $CONTEXT
     - kind: property_identifier
       inside:
         kind: pair
         has:
           kind: arrow_function
+        pattern: $CONTEXT

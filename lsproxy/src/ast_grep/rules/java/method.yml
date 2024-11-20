@@ -3,6 +3,7 @@ language: java
 
 rule:
   kind: identifier
+  pattern: $NAME
   inside:
     kind: method_declaration
-    field: name
+    pattern: $CONTEXT

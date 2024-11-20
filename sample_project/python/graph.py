@@ -22,7 +22,7 @@ class AStarGraph(object):
         )
 
     @property
-    def barriers():
+    def barriers(self):
         return self.barriers
 
     def heuristic(self, start, goal):

@@ -1,6 +1,8 @@
 id: interface
 language: tsx
 rule:
+  pattern: $NAME
   kind: type_identifier
   inside:
     kind: interface_declaration
+    pattern: $CONTEXT

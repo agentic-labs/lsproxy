@@ -1,7 +1,0 @@
-id: function
-language: c
-rule:
-  kind: identifier
-  inside:
-    kind: function_declarator
-    name: declarator

@@ -133,7 +133,7 @@ mod test {
                     },
                     end: Position {
                         line: 6,
-                        character: 12,
+                        character: 51,
                     },
                 },
             },
@@ -155,7 +155,7 @@ mod test {
                     },
                     end: Position {
                         line: 6,
-                        character: 12,
+                        character: 51,
                     },
                 },
             },

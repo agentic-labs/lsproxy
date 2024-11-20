@@ -1,6 +1,8 @@
 id: enum
 language: rust
 rule:
+    pattern: $NAME
     kind: type_identifier
     inside:
       kind: enum_item
+      pattern: $CONTEXT

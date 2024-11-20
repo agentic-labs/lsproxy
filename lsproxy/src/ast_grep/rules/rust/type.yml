@@ -1,7 +1,9 @@
 id: type
 language: rust
 rule:
+    pattern: $NAME
     kind: type_identifier
     inside:
       kind: type_item
+      pattern: $CONTEXT
     nthChild: 1

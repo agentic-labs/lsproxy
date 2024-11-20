@@ -6,4 +6,6 @@ rule:
       - kind: scoped_type_identifier
     inside:
       kind: impl_item
+      pattern: $CONTEXT
     nthChild: 1
+    pattern: $NAME

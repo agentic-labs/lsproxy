@@ -140,7 +140,7 @@ async fn fetch_definition_source_code(
                         character: symbol.range.end.column as u32,
                     },
                 },
-                source_code: source_code.unwrap(),
+                source_code,
             });
         }
     }

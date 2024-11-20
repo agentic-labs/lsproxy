@@ -1,6 +1,7 @@
 id: function
 language: javascript
 rule:
+  pattern: $NAME
   any:
     - kind: identifier
       inside:
@@ -18,8 +19,10 @@ rule:
             has:
               any:
                 - kind: arrow_function
+        pattern: $CONTEXT
     - kind: property_identifier
       inside:
         kind: pair
         has:
           kind: arrow_function
+        pattern: $CONTEXT

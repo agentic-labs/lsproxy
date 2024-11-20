@@ -1,6 +1,0 @@
-id: interface
-language: typescript
-rule:
-    kind: type_identifier
-    inside:
-      kind: interface_declaration

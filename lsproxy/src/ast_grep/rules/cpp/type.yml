@@ -2,7 +2,9 @@ id: type
 language: cpp
 rule:
   kind: type_identifier
+  pattern: $NAME
   inside:
     any:
       - kind: type_definition
       - kind: enum_specifier
+    pattern: $CONTEXT

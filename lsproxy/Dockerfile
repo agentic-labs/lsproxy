@@ -46,7 +46,7 @@ RUN rustup component add rustfmt
 RUN python3 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
-# Install pylsp
+# Install jedi for python
 RUN pip install jedi-language-server
 
 # Install global npm packages
@@ -54,8 +54,6 @@ RUN npm install -g typescript-language-server typescript
 
 #Install Clangd
 RUN apt update && apt install -y clangd
-
-WORKDIR /usr/src/app
 
 # Install compiledb
 RUN pipx install compiledb && pipx ensurepath
@@ -71,10 +69,7 @@ RUN cargo build --release
 
 
 RUN cargo install ast-grep --locked
-COPY ./src/ast_grep/rules /usr/src/.lsproxy/ast_grep_rules
-ENV RULES_DIR=/usr/src/.lsproxy/ast_grep_rules
-# Create sgconfig.yml file pointing to rules directory
-RUN echo "ruleDirs:\n  - ${RULES_DIR}" > /usr/src/sgconfig.yml
+COPY ./src/ast_grep /usr/src/ast_grep
 
 # Document that the container listens on port 4444
 EXPOSE 4444

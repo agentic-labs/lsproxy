@@ -1,7 +1,8 @@
 id: function
 language: rust
 rule:
+    pattern: $NAME
     kind: identifier
     inside:
-      any:
-        - kind: function_item
+      pattern: $CONTEXT
+      kind: function_item

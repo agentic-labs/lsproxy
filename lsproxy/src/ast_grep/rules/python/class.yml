@@ -2,5 +2,7 @@ id: class
 language: python
 rule:
     kind: identifier
+    pattern: $NAME
     inside:
       kind: class_definition
+      pattern: $CONTEXT

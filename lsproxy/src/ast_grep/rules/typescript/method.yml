@@ -1,8 +1,0 @@
-id: method
-language: typescript
-rule:
-    kind: property_identifier
-    inside:
-      any:
-        - kind: method_signature
-        - kind: abstract_method_signature

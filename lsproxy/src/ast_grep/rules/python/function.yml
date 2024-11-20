@@ -1,21 +1,17 @@
 id: function
-utils:
-  is_funcdef:
-    kind: identifier
-    inside:
-      kind: function_definition
-
-# this rule is written a little weirdly
-# in both cases we want to match an identifier inside a function definition
-# but in the second case we want to return the range of the decorator as the outer node
 language: python
 rule:
-    any:
-      - inside:
+  kind: identifier
+  pattern: $NAME
+  any:
+  - inside:
+      kind: function_definition
+      inside:
+        kind: decorated_definition
+        pattern: $CONTEXT
+  - inside:
+      kind: function_definition
+      pattern: $CONTEXT
+      not:
+        inside:
           kind: decorated_definition
-          stopBy: end
-          has:
-            kind:
-              function_definition
-        matches: is_funcdef
-      - matches: is_funcdef

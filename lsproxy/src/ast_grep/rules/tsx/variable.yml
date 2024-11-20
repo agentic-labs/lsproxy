@@ -1,8 +1,7 @@
 id: variable
 language: tsx
-rule:
-  kind: identifier
-  inside:
+utils:
+  global_variable:
     kind: variable_declarator
     not:
         has:
@@ -10,9 +9,23 @@ rule:
             - kind: function_declaration
             - kind: arrow_function
     inside:
-      kind: lexical_declaration 
+      any:
+        - kind: lexical_declaration 
+          inside:
+            kind: export_statement
+            pattern: $CONTEXT
+        - kind: lexical_declaration
+          pattern: $CONTEXT
+          inside:
+            kind: program
+rule:
+  pattern: $NAME
+  any:
+    - kind: identifier
       inside:
-        any:
-          - kind: export_statement
-          - kind: program
-    field: name
+        matches: global_variable
+    - kind: shorthand_property_identifier_pattern
+      inside:
+        kind: object_pattern
+        inside:
+          matches: global_variable

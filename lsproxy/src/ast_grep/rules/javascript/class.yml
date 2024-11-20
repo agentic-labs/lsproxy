@@ -2,7 +2,9 @@ id: class
 language: javascript
 rule:
   kind: identifier
+  pattern: $NAME
   inside:
     any:
       - kind: class_declaration
       - kind: class
+    pattern: $CONTEXT

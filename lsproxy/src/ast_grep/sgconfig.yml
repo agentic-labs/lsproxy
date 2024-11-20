@@ -1,0 +1,5 @@
+ruleDirs:
+  - rules
+languageGlobs:
+  cpp: ['*.c', '*.h']
+  tsx: ['*.ts', '*.cts', '*.mts']

@@ -21,7 +21,7 @@ fn wait_for_server(url: &str) {
 }
 
 #[test]
-fn test_server_integration() -> Result<(), Box<dyn std::error::Error>> {
+fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
     // Use the sample project directory directly as the mount directory
     let mount_dir = "/mnt/lsproxy_root/sample_project/python";
 
@@ -29,9 +29,6 @@ fn test_server_integration() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn the server in a separate thread
     let _server_thread = thread::spawn(move || {
-        // Set the mount directory for the server thread
-        // This only sets the thread local variable.
-        // That's fine since we don't make any requests
         set_global_mount_dir(&mount_dir);
 
         let system = actix_web::rt::System::new();

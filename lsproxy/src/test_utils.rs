@@ -17,6 +17,14 @@ pub fn rust_sample_path() -> String {
     "/mnt/lsproxy_root/sample_project/rust".to_string()
 }
 
+pub fn go_sample_path() -> String {
+    "/mnt/lsproxy_root/sample_project/go".to_string()
+}
+
+pub fn typescript_sample_path() -> String {
+    "/mnt/lsproxy_root/sample_project/typescript".to_string()
+}
+
 pub fn cpp_sample_path() -> String {
     "/mnt/lsproxy_root/sample_project/cpp".to_string()
 }

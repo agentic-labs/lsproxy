@@ -1,0 +1,10 @@
+id: function-declaration
+language: cpp
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    kind: function_declarator
+    inside:
+      kind: declaration
+      pattern: $CONTEXT
