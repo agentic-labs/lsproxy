@@ -21,7 +21,7 @@ pub struct AstGrepRuleMatch {
     pub labels: Vec<Label>,
 }
 
-impl AstGrepMatch {
+impl AstGrepRuleMatch {
     pub fn get_source_code(&self) -> String {
         self.meta_variables.single.context.text.clone()
     }
@@ -74,7 +74,8 @@ pub struct MetaVariables {
     pub multi: MultiVariables,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SingleVariable {
     #[serde(rename = "NAME")]
     pub name: MetaVariable,

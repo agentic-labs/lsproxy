@@ -13,7 +13,6 @@ use crate::utils::workspace_documents::{
     JAVA_EXTENSIONS, JAVA_FILE_PATTERNS, PYTHON_EXTENSIONS, PYTHON_FILE_PATTERNS, RUST_EXTENSIONS,
     RUST_FILE_PATTERNS, TYPESCRIPT_EXTENSIONS, TYPESCRIPT_FILE_PATTERNS,
 };
-use fs_extra::file;
 use log::{debug, error, warn};
 use lsp_types::{GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
@@ -620,7 +619,7 @@ mod tests {
     use super::*;
     use crate::api_types::{FilePosition, FileRange, Position, Symbol, SymbolResponse};
     use crate::test_utils::{
-        c_sample_path, cpp_sample_path, go_sample_path, java_sample_path, js_sample_path,
+        c_sample_path, cpp_sample_path, java_sample_path, js_sample_path,
         python_sample_path, rust_sample_path, typescript_sample_path, TestContext,
     };
     use lsp_types::{Range, Url};
