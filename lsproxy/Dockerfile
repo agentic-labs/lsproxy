@@ -72,8 +72,9 @@ RUN cargo build --release
 
 RUN cargo install ast-grep --locked
 COPY ./src/ast_grep/rules /usr/src/.lsproxy/ast_grep_rules
+ENV RULES_DIR=/usr/src/.lsproxy/ast_grep_rules
 # Create sgconfig.yml file pointing to rules directory
-RUN echo "ruleDirs:\n  - /usr/src/.lsproxy/ast_grep_rules" > /usr/src/sgconfig.yml
+RUN echo "ruleDirs:\n  - ${RULES_DIR}" > /usr/src/sgconfig.yml
 
 # Document that the container listens on port 4444
 EXPOSE 4444

@@ -3,8 +3,8 @@ use actix_web::{
     web::{get, post, resource, scope, Data},
     App, HttpServer,
 };
-use api_types::{CodeContext, ErrorResponse, FileRange, Position};
-use handlers::read_source_code;
+use api_types::{CodeContext, ErrorResponse, FileRange, FileSymbolSubgraph, Position};
+use handlers::{file_subgraph, read_source_code};
 use log::warn;
 use std::fs;
 use std::fs::File;
@@ -50,6 +50,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::find_references,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::file_subgraph,
     ),
     components(
         schemas(
@@ -66,6 +67,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             ErrorResponse,
             CodeContext,
             FileRange,
+            FileSymbolSubgraph,
         )
     ),
     tags(
@@ -170,6 +172,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(post().to(find_references))),
                 ("/symbol/definitions-in-file", Some(Method::Get)) =>
                     api_scope.service(resource(path).route(get().to(definitions_in_file))),
+                ("/symbol/file-subgraph", Some(Method::Get)) =>
+                    api_scope.service(resource(path).route(get().to(file_subgraph))),
                 ("/workspace/list-files", Some(Method::Get)) =>
                     api_scope.service(resource(path).route(get().to(list_files))),
                 ("/workspace/read-source-code", Some(Method::Post)) =>

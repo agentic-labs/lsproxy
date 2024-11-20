@@ -1,18 +1,21 @@
-use crate::api_types::{get_mount_dir, SupportedLanguages};
+use crate::api_types::{self, get_mount_dir, FileSymbolSubgraph, SupportedLanguages, Symbol};
 use crate::ast_grep::client::AstGrepClient;
-use crate::ast_grep::types::AstGrepMatch;
+use crate::ast_grep::types::{AstGrepPatternMatch, AstGrepRuleMatch};
 use crate::lsp::client::LspClient;
 use crate::lsp::languages::{
     ClangdClient, JdtlsClient, JediClient, RustAnalyzerClient, TypeScriptLanguageClient,
 };
-use crate::utils::file_utils::{absolute_path_to_relative_path_string, search_files};
+use crate::utils::file_utils::{
+    absolute_path_to_relative_path_string, search_files, uri_to_relative_path_string,
+};
 use crate::utils::workspace_documents::{
     WorkspaceDocuments, C_AND_CPP_EXTENSIONS, C_AND_CPP_FILE_PATTERNS, DEFAULT_EXCLUDE_PATTERNS,
     JAVA_EXTENSIONS, JAVA_FILE_PATTERNS, PYTHON_EXTENSIONS, PYTHON_FILE_PATTERNS, RUST_EXTENSIONS,
     RUST_FILE_PATTERNS, TYPESCRIPT_EXTENSIONS, TYPESCRIPT_FILE_PATTERNS,
 };
+use fs_extra::file;
 use log::{debug, error, warn};
-use lsp_types::{DocumentSymbolResponse, GotoDefinitionResponse, Location, Position, Range};
+use lsp_types::{GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
@@ -167,38 +170,17 @@ impl Manager {
         Ok(())
     }
 
-    #[deprecated(note = "Use definitions_in_file_ast_grep instead")]
-    pub async fn definitions_in_file(
-        &self,
-        file_path: &str,
-    ) -> Result<DocumentSymbolResponse, LspManagerError> {
-        // Check if the file_path is included in the workspace files
-        let workspace_files = self.list_files().await?;
-        if !workspace_files.iter().any(|f| f == file_path) {
-            return Err(LspManagerError::FileNotFound(file_path.to_string()));
-        }
-        let full_path = get_mount_dir().join(&file_path);
-        let full_path_str = full_path.to_str().unwrap_or_default();
-        let lsp_type = self.detect_language(full_path_str)?;
-        let client = self
-            .get_client(lsp_type)
-            .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
-        let mut locked_client = client.lock().await;
-        locked_client
-            .text_document_symbols(full_path_str)
-            .await
-            .map_err(|e| LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e)))
-    }
-
     pub async fn definitions_in_file_ast_grep(
         &self,
-        file_path: &str,
-    ) -> Result<Vec<AstGrepMatch>, LspManagerError> {
+        relative_file_path: &str,
+    ) -> Result<Vec<AstGrepRuleMatch>, LspManagerError> {
         let workspace_files = self.list_files().await?;
-        if !workspace_files.iter().any(|f| f == file_path) {
-            return Err(LspManagerError::FileNotFound(file_path.to_string()));
+        if !workspace_files.iter().any(|f| f == relative_file_path) {
+            return Err(LspManagerError::FileNotFound(
+                relative_file_path.to_string(),
+            ));
         }
-        let full_path = get_mount_dir().join(&file_path);
+        let full_path = get_mount_dir().join(&relative_file_path);
         let full_path_str = full_path.to_str().unwrap_or_default();
         let ast_grep_result = self
             .ast_grep
@@ -208,18 +190,286 @@ impl Manager {
         ast_grep_result
     }
 
-    pub async fn find_definition(
+    /// Finds all references to imported symbols in a given file
+    ///
+    /// # Arguments
+    /// * `relative_file_path` - The relative path to the file to analyze
+    ///
+    /// # Returns
+    /// * `Result<Vec<AstGrepPatternMatch>, LspManagerError>` - A vector of pattern matches representing references to imported symbols
+    ///
+    /// # Errors
+    /// * `LspManagerError::FileNotFound` if the file does not exist in the workspace
+    /// * `LspManagerError::InternalError` if there is an error retrieving workspace files, symbols or references
+    async fn references_to_imports_in_file(
+        &self,
+        relative_file_path: &str,
+    ) -> Result<Vec<AstGrepPatternMatch>, LspManagerError> {
+        let workspace_files = self.list_files().await.map_err(|e| {
+            LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
+        })?;
+        if !workspace_files.iter().any(|f| f == relative_file_path) {
+            return Err(LspManagerError::FileNotFound(relative_file_path.to_string()).into());
+        }
+        debug!("Getting imports for file: {}", relative_file_path);
+        let full_file_path = get_mount_dir().join(&relative_file_path);
+        let full_file_path_str = full_file_path.to_str().unwrap_or_default();
+        let import_matches = self
+            .ast_grep
+            .get_file_imports(full_file_path_str)
+            .await
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
+            })?;
+        debug!("Found {} imports", import_matches.len());
+        self.ast_grep
+            .get_references_to_imports(&import_matches)
+            .await
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Reference retrieval failed: {}", e))
+            })
+    }
+
+    /// Builds a graph of symbols and their relationships for a given file
+    ///
+    /// # Arguments
+    /// * `relative_file_path` - The relative path to the file to analyze
+    ///
+    /// # Returns
+    /// * `Result<FileSymbolSubgraph, LspManagerError>` - A graph containing:
+    ///   - The symbols defined in the file
+    ///   - Symbols from other files that reference these symbols
+    ///   - Symbols from other files that are referenced by these symbols
+    ///
+    /// # Errors
+    /// * `LspManagerError::FileNotFound` if the file does not exist in the workspace
+    /// * `LspManagerError::InternalError` if there is an error retrieving workspace files, symbols or references
+    pub async fn file_symbol_subgraph(
+        &self,
+        relative_file_path: &str,
+    ) -> Result<FileSymbolSubgraph, LspManagerError> {
+        let workspace_files = self.list_files().await.map_err(|e| {
+            LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
+        })?;
+        if !workspace_files.iter().any(|f| f == relative_file_path) {
+            return Err(LspManagerError::FileNotFound(relative_file_path.to_string()).into());
+        }
+        let file_symbol_matches = self
+            .definitions_in_file_ast_grep(relative_file_path)
+            .await?;
+        let file_symbols: Vec<Symbol> = file_symbol_matches
+            .into_iter()
+            .map(|s| Symbol::from(s))
+            .collect();
+        let referencing_symbols = self.find_referencing_symbols(&file_symbols).await?;
+
+        let (references_to_imports, definitions_of_references_to_imports) = self
+            .find_definitions_of_imported_referenced_symbols(relative_file_path)
+            .await?;
+
+        let mut referenced_symbols = vec![];
+
+        for symbol in &file_symbols {
+            let enclosed_references: Vec<(usize, &AstGrepPatternMatch)> = references_to_imports
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    symbol.range.contains(api_types::Position {
+                        line: r.range.start.line as u32,
+                        character: r.range.start.column as u32,
+                    })
+                })
+                .collect();
+            let references_symbols_for_defined_symbol: Vec<Symbol> = enclosed_references
+                .iter()
+                .map(|(i, _)| definitions_of_references_to_imports[*i].clone().unwrap())
+                .collect();
+            referenced_symbols.push(references_symbols_for_defined_symbol);
+        }
+
+        Ok(FileSymbolSubgraph {
+            symbols: file_symbols,
+            referencing_symbols: referencing_symbols,
+            referenced_symbols: referenced_symbols,
+        })
+    }
+
+    /// Finds definitions of symbols that are imported then referenced in a file.
+    ///
+    /// # Arguments
+    /// * `relative_file_path` - The relative path to the file to analyze
+    ///
+    /// # Returns
+    /// A tuple containing:
+    /// * A vector of AstGrepPatternMatch representing references to imports found in the file
+    /// * A vector of optional Symbols representing the definitions of those referenced imports
+    ///
+    /// # Errors
+    /// Returns LspManagerError if:
+    /// * File references cannot be retrieved
+    /// * Definition lookups fail
+    /// * AST grep analysis fails
+    async fn find_definitions_of_imported_referenced_symbols(
+        &self,
+        relative_file_path: &str,
+    ) -> Result<(Vec<AstGrepPatternMatch>, Vec<Option<Symbol>>), LspManagerError> {
+        debug!(
+            "Finding definitions of imported referenced symbols in file: {}",
+            relative_file_path
+        );
+        let references_to_imports = self
+            .references_to_imports_in_file(relative_file_path)
+            .await?;
+        debug!(
+            "Found {} references to imports",
+            references_to_imports.len()
+        );
+        let definitions_responses_for_references_to_imports =
+            futures::future::join_all(references_to_imports.iter().map(|r| {
+                self.find_definition(
+                    // TODO bleh
+                    r.file
+                        .as_str()
+                        .strip_prefix(get_mount_dir().to_str().unwrap())
+                        .unwrap()
+                        .strip_prefix("/")
+                        .unwrap(),
+                    Position {
+                        line: r.range.start.line as u32,
+                        character: r.range.start.column as u32,
+                    },
+                )
+            }))
+            .await;
+        let definitions_of_references_to_imports: Vec<Location> =
+            definitions_responses_for_references_to_imports
+                .into_iter()
+                .filter_map(|r| match r {
+                    Ok(d) => match d {
+                        GotoDefinitionResponse::Scalar(l) => Some(l.clone()),
+                        GotoDefinitionResponse::Array(l) => l.first().cloned(),
+                        GotoDefinitionResponse::Link(_) => {
+                            error!("Link definition response is not supported");
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        error!("Definition retrieval failed: {}", e);
+                        None
+                    }
+                })
+                .collect();
+        let symbols_of_definitions_of_references_to_imports =
+            futures::future::join_all(definitions_of_references_to_imports.iter().map(
+                |d| async move {
+                    let matches = self
+                        .definitions_in_file_ast_grep(&uri_to_relative_path_string(&d.uri))
+                        .await
+                        .unwrap();
+                    let target_match = matches.iter().find(|m| {
+                        m.range.start.line == d.range.start.line as usize
+                            && m.range.start.column as u32 == d.range.start.character
+                            && m.range.end.line == d.range.end.line as usize
+                            && m.range.end.column as u32 == d.range.end.character
+                    });
+                    target_match.map(|m| Symbol::from(m.clone()))
+                },
+            ))
+            .await;
+        Ok((
+            references_to_imports,
+            symbols_of_definitions_of_references_to_imports,
+        ))
+    }
+
+    /// Finds all symbols that reference the given file symbols.
+    ///
+    /// For each symbol in `file_symbols`, finds all references to that symbol across the codebase.
+    /// Then for each reference location, finds all symbols that enclose that reference position.
+    ///
+    /// # Arguments
+    /// * `file_symbols` - Vector of symbols from a file to find references for
+    ///
+    /// # Returns
+    /// * `Result<Vec<Vec<Symbol>>, LspManagerError>` - For each reference found, returns the vector of
+    ///   symbols that enclose that reference position
+    async fn find_referencing_symbols(
+        &self,
+        file_symbols: &Vec<Symbol>,
+    ) -> Result<Vec<Vec<Symbol>>, LspManagerError> {
+        let relative_file_path = file_symbols[0].identifier_position.path.clone();
+        let references_by_symbol: Vec<Result<Vec<Location>, LspManagerError>> =
+            futures::future::join_all(file_symbols.iter().map(|s| {
+                self.find_references(
+                    &relative_file_path,
+                    Position {
+                        line: s.identifier_position.position.line,
+                        character: s.identifier_position.position.character,
+                    },
+                )
+            }))
+            .await
+            .into_iter()
+            .collect();
+        let mut referencing_symbols: Vec<Vec<Symbol>> = vec![];
+        for (i, reference_list) in references_by_symbol.into_iter().enumerate() {
+            let locations = reference_list?;
+            for location in locations {
+                let relative_path = uri_to_relative_path_string(&location.uri);
+                let mut symbols = self
+                    .find_symbols_enclosing_position(&relative_path, location.range.start)
+                    .await?;
+                symbols.retain(|s| s != &file_symbols[i]);
+                referencing_symbols.push(symbols);
+            }
+        }
+        Ok(referencing_symbols)
+    }
+
+    /// Finds all symbols that enclose a given position in a file.
+    ///
+    /// A symbol "encloses" a position if the position falls within the symbol's range.
+    /// For example, a function symbol encloses all positions between its opening and closing braces.
+    ///
+    /// # Arguments
+    /// * `file_path` - The relative path to the file to search in
+    /// * `position` - The position to find enclosing symbols for
+    ///
+    /// # Returns
+    /// * `Result<Vec<Symbol>, LspManagerError>` - Vector of symbols that enclose the given position
+    ///
+    /// # Errors
+    /// * `LspManagerError` if there is an error retrieving symbols from the file
+    async fn find_symbols_enclosing_position(
         &self,
         file_path: &str,
+        position: Position,
+    ) -> Result<Vec<Symbol>, LspManagerError> {
+        let file_symbols = self.definitions_in_file_ast_grep(file_path).await?;
+        let mut symbols: Vec<Symbol> = file_symbols.into_iter().map(|s| Symbol::from(s)).collect();
+        symbols.retain(|s| {
+            (s.range.start.line < position.line
+                || (s.range.start.line == position.line
+                    && s.range.start.character <= position.character))
+                && (s.range.end.line > position.line
+                    || (s.range.end.line == position.line
+                        && s.range.end.character >= position.character))
+        });
+        Ok(symbols)
+    }
+
+    pub async fn find_definition(
+        &self,
+        relative_file_path: &str,
         position: Position,
     ) -> Result<GotoDefinitionResponse, LspManagerError> {
         let workspace_files = self.list_files().await.map_err(|e| {
             LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
         })?;
-        if !workspace_files.iter().any(|f| f == file_path) {
-            return Err(LspManagerError::FileNotFound(file_path.to_string()).into());
+        if !workspace_files.iter().any(|f| f == relative_file_path) {
+            return Err(LspManagerError::FileNotFound(relative_file_path.to_string()).into());
         }
-        let full_path = get_mount_dir().join(&file_path);
+        let full_path = get_mount_dir().join(&relative_file_path);
         let full_path_str = full_path.to_str().unwrap_or_default();
         let lsp_type = self.detect_language(full_path_str).map_err(|e| {
             LspManagerError::InternalError(format!("Language detection failed: {}", e))
@@ -292,12 +542,15 @@ impl Manager {
         Ok(files)
     }
 
-    fn detect_language(&self, file_path: &str) -> Result<SupportedLanguages, LspManagerError> {
-        let path = PathBuf::from(file_path);
+    fn detect_language(
+        &self,
+        relative_file_path: &str,
+    ) -> Result<SupportedLanguages, LspManagerError> {
+        let path = PathBuf::from(relative_file_path);
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .ok_or_else(|| LspManagerError::UnsupportedFileType(file_path.to_string()))?;
+            .ok_or_else(|| LspManagerError::UnsupportedFileType(relative_file_path.to_string()))?;
 
         match extension {
             ext if PYTHON_EXTENSIONS.contains(&ext) => Ok(SupportedLanguages::Python),
@@ -307,19 +560,23 @@ impl Manager {
             ext if RUST_EXTENSIONS.contains(&ext) => Ok(SupportedLanguages::Rust),
             ext if C_AND_CPP_EXTENSIONS.contains(&ext) => Ok(SupportedLanguages::CPP),
             ext if JAVA_EXTENSIONS.contains(&ext) => Ok(SupportedLanguages::Java),
-            _ => Err(LspManagerError::UnsupportedFileType(file_path.to_string())),
+            _ => Err(LspManagerError::UnsupportedFileType(
+                relative_file_path.to_string(),
+            )),
         }
     }
 
     pub async fn read_source_code(
         &self,
-        file_path: &str,
+        relative_file_path: &str,
         range: Option<Range>,
     ) -> Result<String, LspManagerError> {
-        let client = self.get_client(self.detect_language(file_path)?).ok_or(
-            LspManagerError::LspClientNotFound(self.detect_language(file_path)?),
-        )?;
-        let full_path = get_mount_dir().join(&file_path);
+        let client = self
+            .get_client(self.detect_language(relative_file_path)?)
+            .ok_or(LspManagerError::LspClientNotFound(
+                self.detect_language(relative_file_path)?,
+            ))?;
+        let full_path = get_mount_dir().join(&relative_file_path);
         let mut locked_client = client.lock().await;
         locked_client
             .get_workspace_documents()

@@ -1,0 +1,11 @@
+id: import
+language: python
+rule:
+    kind: identifier
+    pattern: $NAME
+    inside:
+      any:
+        - kind: import_from_statement
+        - kind: relative_import
+        - kind: import_statement
+      stopBy: end

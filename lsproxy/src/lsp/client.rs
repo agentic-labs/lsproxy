@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, InitializeResult, Location, PartialResultParams, Position,
-    PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentIdentifier, TextDocumentPositionParams, Url,
-    WorkDoneProgressParams, WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
+    PartialResultParams, Position, PublishDiagnosticsClientCapabilities, ReferenceContext,
+    ReferenceParams, TagSupport, TextDocumentClientCapabilities, TextDocumentIdentifier,
+    TextDocumentPositionParams, Url, WorkDoneProgressParams, WorkspaceFolder,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use std::error::Error;
 use std::path::Path;
@@ -250,31 +250,6 @@ pub trait LspClient: Send {
         } else {
             Err("Unexpected workspace symbols response".into())
         }
-    }
-
-    async fn text_document_symbols(
-        &mut self,
-        file_path: &str,
-    ) -> Result<DocumentSymbolResponse, Box<dyn Error + Send + Sync>> {
-        debug!("Requesting document symbols for {}", file_path);
-        let params = DocumentSymbolParams {
-            text_document: TextDocumentIdentifier {
-                uri: Url::from_file_path(file_path).unwrap(),
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        };
-
-        let result = self
-            .send_request(
-                "textDocument/documentSymbol",
-                Some(serde_json::to_value(params)?),
-            )
-            .await?;
-
-        let symbols: DocumentSymbolResponse = serde_json::from_value(result)?;
-        debug!("Received document symbols response");
-        Ok(symbols)
     }
 
     async fn text_document_reference(

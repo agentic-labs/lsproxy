@@ -96,6 +96,15 @@ pub struct FileRange {
     pub end: Position,
 }
 
+impl FileRange {
+    pub fn contains(&self, position: Position) -> bool {
+        (self.start.line < position.line
+            || (self.start.line == position.line && self.start.character <= position.character))
+            && (position.line < self.end.line
+                || (position.line == self.end.line && position.character <= self.end.character))
+    }
+}
+
 impl From<Position> for lsp_types::Position {
     fn from(position: Position) -> Self {
         lsp_types::Position {
@@ -266,6 +275,13 @@ pub struct ReferencesResponse {
 }
 
 pub type SymbolResponse = Vec<Symbol>;
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FileSymbolSubgraph {
+    pub symbols: Vec<Symbol>,
+    pub referencing_symbols: Vec<Vec<Symbol>>,
+    pub referenced_symbols: Vec<Vec<Symbol>>,
+}
 
 impl From<(GotoDefinitionResponse, Option<Vec<CodeContext>>, bool)> for DefinitionResponse {
     fn from(
