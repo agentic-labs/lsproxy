@@ -2,7 +2,7 @@ use clap::Parser;
 use env_logger::Env;
 use log::info;
 use lsproxy::{initialize_app_state, initialize_app_state_with_mount_dir, run_server_with_host, write_openapi_to_file};
-use std::{default, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     let app_state = match cli.workspace_folder {
-        w if len(w) > 0 => initialize_app_state_with_mount_dir(w)
+        w if w.len() > 0 => initialize_app_state_with_mount_dir(Some(&w))
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
         _ => initialize_app_state()
