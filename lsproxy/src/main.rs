@@ -1,8 +1,8 @@
 use clap::Parser;
 use env_logger::Env;
 use log::info;
-use lsproxy::{initialize_app_state, run_server_with_host, write_openapi_to_file};
-use std::path::PathBuf;
+use lsproxy::{initialize_app_state, initialize_app_state_with_mount_dir, run_server_with_host, write_openapi_to_file};
+use std::{default, path::PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -14,6 +14,9 @@ struct Cli {
     /// Host address to bind to (default: 0.0.0.0)
     #[arg(long, default_value = "0.0.0.0")]
     host: String,
+
+    #[arg(short, long)]
+    workspace_folder: String,
 }
 
 #[actix_web::main]
@@ -36,9 +39,14 @@ async fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let app_state = initialize_app_state()
-        .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    let app_state = match cli.workspace_folder {
+        w if len(w) > 0 => initialize_app_state_with_mount_dir(w)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
+        _ => initialize_app_state()
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
+    };
 
     run_server_with_host(app_state, &cli.host).await
 }
