@@ -1,7 +1,7 @@
 use clap::Parser;
 use env_logger::Env;
 use log::info;
-use lsproxy::{initialize_app_state, initialize_app_state_with_mount_dir, run_server_with_host, write_openapi_to_file};
+use lsproxy::{initialize_app_state, initialize_app_state_with_mount_dir, run_server_with_host,run_server_with_port_and_host, write_openapi_to_file};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -17,6 +17,9 @@ struct Cli {
 
     #[arg(short, long)]
     workspace_folder: String,
+
+    #[arg(short,long, default_value = "4444")]
+    port: u16
 }
 
 #[actix_web::main]
@@ -48,5 +51,5 @@ async fn main() -> std::io::Result<()> {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
     };
 
-    run_server_with_host(app_state, &cli.host).await
+    run_server_with_port_and_host(app_state, cli.port, &cli.host).await    
 }
