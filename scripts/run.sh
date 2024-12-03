@@ -9,4 +9,4 @@ PORT=${2:-4444}
 ./scripts/build.sh
 
 # Run the application
-docker run --rm -p ${PORT}:4444 -v $1:/mnt/workspace -v "$(pwd)/lsproxy/target/release":/usr/src/app lsproxy-dev ./lsproxy
+nohup docker run --rm -p ${PORT}:4444 -v $1:/mnt/workspace -v "$(pwd)/lsproxy/target/release":/usr/src/app lsproxy-dev ./lsproxy

@@ -1,0 +1,13 @@
+id: import
+language: java
+rule:
+    kind: identifier
+    pattern: $NAME
+    inside:
+      kind: scoped_identifier
+      inside:
+        kind: import_declaration
+        pattern: $CONTEXT
+
+
+

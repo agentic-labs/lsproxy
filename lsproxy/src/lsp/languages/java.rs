@@ -66,7 +66,7 @@ impl LspClient for JdtlsClient {
             })
             .await?;
         debug!("Java: waiting for service ready notification.This may take a minute...");
-        tokio::time::timeout(std::time::Duration::from_secs(180), notification_rx.recv()).await??;
+        tokio::time::timeout(std::time::Duration::from_secs(240), notification_rx.recv()).await??;
         Ok(init_result)
     }
 }
@@ -99,6 +99,12 @@ impl JdtlsClient {
             .arg(workspace_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .arg("-XX:+UseG1GC")
+            .arg("-XX:+UseStringDeduplication")
+            .arg("-XX:+AggressiveOpts")
+            .arg("-XX:+UseCompressedOops")
+            .arg("-Djdt.ls.performanceTracker.enabled=true")
+            .arg("-Xms1g")
             .spawn()
             .map_err(|e| {
                 Box::<dyn std::error::Error + Send + Sync>::from(format!(

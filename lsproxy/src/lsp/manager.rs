@@ -263,6 +263,13 @@ impl Manager {
             .map(|s| Symbol::from(s))
             .collect();
 
+        if file_symbols.is_empty() {
+            return Ok(FileSymbolSubgraph {
+                symbols: vec![],
+                referencing_symbols: vec![],
+                referenced_symbols: vec![],
+            });
+        }
         // Find symbols in other files that reference our file's symbols
         let referencing_symbols = self.find_referencing_symbols(&file_symbols).await?;
 
@@ -334,20 +341,26 @@ impl Manager {
             references_to_imports.len()
         );
         let definitions_responses_for_references_to_imports =
-            futures::future::join_all(references_to_imports.iter().map(|r| {
+            futures::future::join_all(references_to_imports.iter().map(|r| async {
+                let relative_file_path = r
+                    .file
+                    .as_str()
+                    .strip_prefix(get_mount_dir().to_str().unwrap())
+                    .and_then(|s| s.strip_prefix("/"));
+                if relative_file_path.is_none() {
+                    return Err(LspManagerError::InternalError(format!(
+                        "Failed to convert URI: {}",
+                        r.file
+                    )));
+                }
                 self.find_definition(
-                    // TODO bleh
-                    r.file
-                        .as_str()
-                        .strip_prefix(get_mount_dir().to_str().unwrap())
-                        .unwrap()
-                        .strip_prefix("/")
-                        .unwrap(),
+                    relative_file_path.unwrap(),
                     Position {
                         line: r.range.start.line as u32,
                         character: r.range.start.column as u32,
                     },
                 )
+                .await
             }))
             .await;
         let definitions_of_references_to_imports: Vec<Option<Location>> =
@@ -372,8 +385,8 @@ impl Manager {
             futures::future::join_all(definitions_of_references_to_imports.iter().map(
                 |d| async move {
                     if let Some(location) = d {
-                        let relative_path = uri_to_relative_path_string(&location.uri);
-                        if let Err(_) = relative_path {
+                        let relative_path = uri_to_relative_path_string(&location.uri).ok();
+                        if relative_path.is_none() {
                             return None;
                         }
                         let matches = self
@@ -418,7 +431,14 @@ impl Manager {
         &self,
         file_symbols: &Vec<Symbol>,
     ) -> Result<Vec<Vec<Symbol>>, LspManagerError> {
-        let relative_file_path = file_symbols[0].identifier_position.path.clone();
+        if file_symbols.is_empty() {
+            return Ok(vec![]);
+        }
+        let first_symbol = file_symbols.first();
+        if first_symbol.is_none() {
+            return Ok(vec![]);
+        }
+        let relative_file_path = first_symbol.unwrap().identifier_position.path.clone();
         let references_by_symbol: Vec<Result<Vec<Location>, LspManagerError>> =
             futures::future::join_all(file_symbols.iter().map(|s| {
                 self.find_references(
@@ -434,14 +454,16 @@ impl Manager {
             .collect();
         let mut referencing_symbols: Vec<Vec<Symbol>> = vec![];
         for (i, reference_list) in references_by_symbol.into_iter().enumerate() {
-            let locations = reference_list?;
+            let locations = reference_list.unwrap_or(vec![]);
             let mut referencing_symbols_for_symbol = vec![];
+
             for location in locations {
-                let relative_path = uri_to_relative_path_string(&location.uri).map_err(|e| {
-                    LspManagerError::InternalError(format!("Failed to convert URI: {}", e))
-                })?;
+                let relative_path = uri_to_relative_path_string(&location.uri).ok();
+                if relative_path.is_none() {
+                    continue;
+                }
                 let mut symbols = self
-                    .find_symbols_enclosing_position(&relative_path, location.range.start)
+                    .find_symbols_enclosing_position(&relative_path.unwrap(), location.range.start)
                     .await?;
                 symbols.retain(|s| s != &file_symbols[i]);
                 referencing_symbols_for_symbol.extend(symbols);

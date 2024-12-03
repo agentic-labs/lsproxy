@@ -1,12 +1,11 @@
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast::{channel, Receiver, Sender};
-use tokio::sync::Mutex;
 
 pub trait JsonRpc: Send + Sync {
     fn create_request(&self, method: &str, params: Option<Value>) -> (u64, String);
@@ -96,15 +95,15 @@ pub struct ExpectedMessageKey {
 
 #[derive(Clone)]
 pub struct PendingRequests {
-    request_channels: Arc<Mutex<HashMap<u64, Sender<JsonRpcMessage>>>>,
-    notification_channels: Arc<Mutex<HashMap<ExpectedMessageKey, Sender<JsonRpcMessage>>>>,
+    request_channels: Arc<DashMap<u64, Sender<JsonRpcMessage>>>,
+    notification_channels: Arc<DashMap<ExpectedMessageKey, Sender<JsonRpcMessage>>>,
 }
 
 impl PendingRequests {
     pub fn new() -> Self {
         Self {
-            request_channels: Arc::new(Mutex::new(HashMap::new())),
-            notification_channels: Arc::new(Mutex::new(HashMap::new())),
+            request_channels: Arc::new(DashMap::new()),
+            notification_channels: Arc::new(DashMap::new()),
         }
     }
 
@@ -112,34 +111,30 @@ impl PendingRequests {
         &self,
         id: u64,
     ) -> Result<Receiver<JsonRpcMessage>, Box<dyn Error + Send + Sync>> {
-        let (tx, rx) = channel::<JsonRpcMessage>(16);
-        self.request_channels.lock().await.insert(id, tx);
+        let (tx, rx) = channel(16);
+        self.request_channels.insert(id, tx);
         Ok(rx)
     }
 
-    pub async fn remove_request(
-        &self,
-        id: u64,
-    ) -> Result<Option<Sender<JsonRpcMessage>>, Box<dyn Error + Send + Sync>> {
-        Ok(self.request_channels.lock().await.remove(&id))
+    pub async fn remove_request(&self, id: u64) -> Option<Sender<JsonRpcMessage>> {
+        self.request_channels.remove(&id).map(|(_, sender)| sender)
     }
 
     pub async fn add_notification(
         &self,
-        expected_message: ExpectedMessageKey,
+        key: ExpectedMessageKey,
     ) -> Result<Receiver<JsonRpcMessage>, Box<dyn Error + Send + Sync>> {
-        let (tx, rx) = channel::<JsonRpcMessage>(16);
-        self.notification_channels
-            .lock()
-            .await
-            .insert(expected_message, tx);
+        let (tx, rx) = channel(16);
+        self.notification_channels.insert(key, tx);
         Ok(rx)
     }
 
     pub async fn remove_notification(
         &self,
-        pattern: ExpectedMessageKey,
+        key: &ExpectedMessageKey,
     ) -> Option<Sender<JsonRpcMessage>> {
-        self.notification_channels.lock().await.remove(&pattern)
+        self.notification_channels
+            .remove(key)
+            .map(|(_, sender)| sender)
     }
 }

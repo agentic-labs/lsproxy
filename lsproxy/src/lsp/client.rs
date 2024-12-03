@@ -1,6 +1,6 @@
 use crate::lsp::json_rpc::{JsonRpc, JsonRpcMessage};
 use crate::lsp::process::Process;
-use crate::lsp::{ExpectedMessageKey, InnerMessage, JsonRpcHandler, ProcessHandler};
+use crate::lsp::{ExpectedMessageKey, JsonRpcHandler, ProcessHandler};
 use crate::utils::file_utils::search_directories;
 use async_trait::async_trait;
 use log::{debug, error, warn};
@@ -19,6 +19,8 @@ use crate::utils::workspace_documents::{WorkspaceDocumentsHandler, DEFAULT_EXCLU
 
 use super::PendingRequests;
 
+use std::sync::Arc;
+
 #[async_trait]
 pub trait LspClient: Send {
     async fn initialize(
@@ -27,9 +29,9 @@ pub trait LspClient: Send {
     ) -> Result<InitializeResult, Box<dyn Error + Send + Sync>> {
         debug!("Initializing LSP client with root path: {:?}", root_path);
         self.start_response_listener().await?;
-
+        debug!("Response listener started");
         let params = self.get_initialize_params(root_path).await;
-
+        debug!("Sending initialize request");
         let result = self
             .send_request("initialize", Some(serde_json::to_value(params)?))
             .await?;
@@ -87,12 +89,10 @@ pub trait LspClient: Send {
 
         let message = format!("Content-Length: {}\r\n\r\n{}", request.len(), request);
         self.get_process().send(&message).await?;
-
         let response = response_receiver
             .recv()
             .await
             .map_err(|e| format!("Failed to receive response: {}", e))?;
-
         if let Some(result) = response.result {
             Ok(result)
         } else if let Some(error) = response.error.clone() {
@@ -107,44 +107,47 @@ pub trait LspClient: Send {
     }
 
     async fn start_response_listener(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let process = self.get_process().clone();
+        let stdout_rx = Arc::clone(&self.get_process().stdout_rx);
         let pending_requests = self.get_pending_requests().clone();
         let json_rpc = self.get_json_rpc().clone();
-
+        
         tokio::spawn(async move {
-            loop {
-                if let Ok(raw_response) = process.receive().await {
-                    if let Ok(message) = json_rpc.parse_message(&raw_response) {
+            let mut receiver = stdout_rx.lock().await;
+            while let Some(raw_response) = receiver.recv().await {
+                
+                match json_rpc.parse_message(&raw_response.to_string()) {
+                    Ok(message) => {
                         if let Some(id) = message.id {
-                            debug!("Received response for request {}", id);
-                            if let Ok(Some(sender)) = pending_requests.remove_request(id).await {
-                                if sender.send(message.clone()).is_err() {
-                                    error!("Failed to send response for request {}", id);
+                            if let Some(sender) = pending_requests.remove_request(id).await {
+                                if let Err(e) = sender.send(message) {
+                                    error!("Failed to send response to waiting request: {}", e);
                                 }
                             } else {
-                                error!(
-                                    "Failed to remove pending request {} - Message: {:?}",
-                                    id, message
-                                );
+                                warn!("No pending request found for id {}", id);
                             }
-                        } else if let Some(params) = message
-                            .params
-                            .clone()
-                            .and_then(|p| serde_json::from_value::<InnerMessage>(p).ok())
-                        {
-                            let message_key = ExpectedMessageKey {
-                                method: message.method.clone().unwrap(),
-                                message: params.message,
+                        } else if let Some(method) = &message.method {
+                            // Handle notifications
+                            let key = ExpectedMessageKey {
+                                method: method.clone(),
+                                message: message
+                                    .params
+                                    .as_ref()
+                                    .and_then(|p| p.get("message"))
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or_default()
+                                    .to_string(),
                             };
-                            if let Some(sender) =
-                                pending_requests.remove_notification(message_key).await
-                            {
-                                sender.send(message).unwrap();
+                            if let Some(sender) = pending_requests.remove_notification(&key).await {
+                                if let Err(e) = sender.send(message) {
+                                    error!("Failed to send notification: {}", e);
+                                }
                             }
                         }
                     }
+                    Err(e) => error!("Failed to parse message: {:?}, raw: {:?}", e, raw_response),
                 }
             }
+            error!("Response listener channel closed");
         });
 
         Ok(())
