@@ -1,5 +1,7 @@
 FROM rust:1.81.0-slim-bookworm
 
+RUN mkdir -p /usr/src/app/jdtls_workspace && \
+    chown -R 1000:1000 /usr/src/app/jdtls_workspace
 # Set the working directory in the container
 WORKDIR /usr/src/app
 

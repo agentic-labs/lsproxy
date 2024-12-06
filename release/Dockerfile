@@ -12,6 +12,8 @@ RUN cargo build --release
 
 FROM rust:1.81.0-slim-bookworm
 
+RUN mkdir -p /usr/src/app/jdtls_workspace && \
+    chown -R 1000:1000 /usr/src/app/jdtls_workspace
 
 # Install runtime dependencies, Python, Node.js, and npm
 RUN apt-get update && apt-get install \

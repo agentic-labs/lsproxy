@@ -1,0 +1,1 @@
+FROM ivanovm0/lsproxy-lazy-test:latest

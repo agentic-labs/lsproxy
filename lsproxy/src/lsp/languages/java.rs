@@ -78,8 +78,7 @@ impl JdtlsClient {
         watch_events_rx: Receiver<DebouncedEvent>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let workspace_dir = Path::new("/usr/src/app/jdtls_workspace");
-        tokio::fs::create_dir_all(&workspace_dir).await?;
-        tokio::fs::set_permissions(&workspace_dir, PermissionsExt::from_mode(0o777)).await?;
+        debug!("Creating Java process");
         let process = Command::new("java")
             .arg("-Declipse.application=org.eclipse.jdt.ls.core.id1")
             .arg("-Dosgi.bundles.defaultStartLevel=4")
@@ -100,6 +99,7 @@ impl JdtlsClient {
             .arg(workspace_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 Box::<dyn std::error::Error + Send + Sync>::from(format!(
