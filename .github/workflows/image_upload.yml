@@ -1,24 +1,35 @@
-name: Publish Docker Image
+name: Release LSProxy
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+*'  # Matches PEP 440 versions like 0.1.0a1
-
+permissions:
+  contents: write  # For creating releases
+  packages: write  # For container registry operations
 jobs:
-  docker-publish:
+  validate-and-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+
+      - name: Validate script version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          SCRIPT_VERSION=$(grep "LSPROXY_VERSION=" release/install-lsproxy.sh | cut -d'"' -f2)
+          if [ "$VERSION" != "$SCRIPT_VERSION" ]; then
+            echo "Error: Script version ($SCRIPT_VERSION) does not match release tag ($VERSION)"
+            exit 1
+          fi
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
         
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Cache Docker layers
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}
@@ -32,13 +43,13 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: agenticlabs
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: ./lsproxy
           file: ./release/Dockerfile
@@ -49,6 +60,58 @@ jobs:
             agenticlabs/lsproxy:latest
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new
+
+      - name: Extract binaries from images
+        run: |
+          mkdir -p release-binaries
+          VERSION=${GITHUB_REF#refs/tags/}
+          # Copy install script
+          cp release/install-lsproxy.sh release-binaries/
+          # Extract AMD64 binary
+          docker pull agenticlabs/lsproxy:${VERSION}
+          docker create --name amd64-container --platform linux/amd64 agenticlabs/lsproxy:${VERSION}
+          docker cp amd64-container:/lsproxy release-binaries/lsproxy-${VERSION}-linux-amd64
+          docker rm amd64-container
+          # Extract ARM64 binary
+          docker create --name arm64-container --platform linux/arm64 agenticlabs/lsproxy:${VERSION}
+          docker cp arm64-container:/lsproxy release-binaries/lsproxy-${VERSION}-linux-arm64
+          docker rm arm64-container
+          chmod +x release-binaries/*
+
+      - name: Prepare ast-grep rules
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p release-binaries
+          cd lsproxy/src
+          find ast_grep -type f -print0 | tar -czvf ../../release-binaries/lsproxy-${VERSION}-ast-grep-rules.tar.gz --null -T -
+
+      - name: Validate release files
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          REQUIRED_FILES=(
+            "release-binaries/lsproxy-${VERSION}-linux-arm64"
+            "release-binaries/lsproxy-${VERSION}-linux-amd64"
+            "release-binaries/install-lsproxy.sh"
+            "release-binaries/lsproxy-${VERSION}-ast-grep-rules.tar.gz"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Required file $file is missing"
+              exit 1
+            fi
+          done
+          echo "All required files are present"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-binaries/lsproxy-${{ github.ref_name }}-linux-arm64
+            release-binaries/lsproxy-${{ github.ref_name }}-linux-amd64
+            release-binaries/install-lsproxy.sh
+            release-binaries/lsproxy-${{ github.ref_name }}-ast-grep-rules.tar.gz
+          generate_release_notes: true
 
       - name: Move cache
         run: |

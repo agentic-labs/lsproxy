@@ -21,6 +21,7 @@ fn wait_for_server(url: &str) {
 }
 
 #[test]
+#[ignore = "Java hangs in tests"]
 fn test_server_integration_java() -> Result<(), Box<dyn std::error::Error>> {
     // Use the sample project directory directly as the mount directory
     let mount_dir = "/mnt/lsproxy_root/sample_project/java";

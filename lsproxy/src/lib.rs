@@ -95,6 +95,14 @@ pub async fn initialize_app_state_with_mount_dir(
         warn!("Changing global mount dir to: {}", global_mount_dir);
     }
 
+    if let Err(_) = check_mount_dir() {
+        eprintln!(
+            "Error: Your workspace isn't mounted at '{}'. Please mount your workspace at this location.",
+            get_mount_dir().to_string_lossy()
+        );
+        std::process::exit(1);
+    }
+
     let mount_dir_path = get_mount_dir();
     let mount_dir = mount_dir_path.to_string_lossy();
 
@@ -132,14 +140,6 @@ pub async fn run_server_with_port_and_host(
     port: u16,
     host: &str,
 ) -> std::io::Result<()> {
-    if let Err(e) = check_mount_dir() {
-        eprintln!(
-            "Error: Your workspace isn't mounted at '{}'. Please mount your workspace at this location.",
-            get_mount_dir().to_string_lossy()
-        );
-        return Err(e);
-    }
-
     let openapi = ApiDoc::openapi();
 
     // Parse the full server URL to get just the path component

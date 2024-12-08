@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -8,7 +9,6 @@ use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     sync::Mutex,
 };
-use std::sync::Arc;
 
 #[async_trait::async_trait]
 pub trait Process: Send + Sync {
@@ -51,7 +51,7 @@ impl ProcessHandler {
                     Ok(0) => break, // EOF
                     Ok(_) => {
                         let line = buffer.trim();
-                        
+
                         // Parse headers
                         if line.starts_with("Content-Length: ") {
                             if let Ok(len) = line["Content-Length: ".len()..].parse::<usize>() {

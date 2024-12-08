@@ -8,7 +8,8 @@ use tokio::sync::broadcast::Receiver;
 use crate::lsp::{JsonRpcHandler, LspClient, PendingRequests, ProcessHandler};
 
 use crate::utils::workspace_documents::{
-    WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS, PYTHON_FILE_PATTERNS, PYTHON_ROOT_FILES,
+    DidOpenConfiguration, WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS,
+    PYTHON_FILE_PATTERNS, PYTHON_ROOT_FILES,
 };
 
 pub struct JediClient {
@@ -69,6 +70,7 @@ impl JediClient {
                 .map(|&s| s.to_string())
                 .collect(),
             watch_events_rx,
+            DidOpenConfiguration::None,
         );
 
         let json_rpc_handler = JsonRpcHandler::new();

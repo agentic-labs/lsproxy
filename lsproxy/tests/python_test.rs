@@ -136,7 +136,7 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 end: Position {
                     line: 6,
-                    character: 12,
+                    character: 51,
                 },
             },
         },
@@ -158,7 +158,7 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 end: Position {
                     line: 6,
-                    character: 12,
+                    character: 51,
                 },
             },
         },

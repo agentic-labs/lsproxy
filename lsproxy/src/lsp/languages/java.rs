@@ -1,4 +1,4 @@
-use std::{error::Error, os::unix::fs::PermissionsExt, path::Path, process::Stdio};
+use std::{error::Error, path::Path, process::Stdio};
 
 use async_trait::async_trait;
 use log::debug;
@@ -9,7 +9,8 @@ use tokio::{process::Command, sync::broadcast::Receiver};
 use crate::{
     lsp::{ExpectedMessageKey, JsonRpcHandler, LspClient, PendingRequests, ProcessHandler},
     utils::workspace_documents::{
-        WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS, JAVA_FILE_PATTERNS, JAVA_ROOT_FILES,
+        DidOpenConfiguration, WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS,
+        JAVA_FILE_PATTERNS, JAVA_ROOT_FILES,
     },
 };
 
@@ -65,8 +66,8 @@ impl LspClient for JdtlsClient {
                 message: "ServiceReady".to_string(),
             })
             .await?;
-        debug!("Java: waiting for service ready notification.This may take a minute...");
-        tokio::time::timeout(std::time::Duration::from_secs(240), notification_rx.recv()).await??;
+        debug!("Java: waiting for service ready notification. This may take a minute...");
+        tokio::time::timeout(std::time::Duration::from_secs(180), notification_rx.recv()).await??;
         Ok(init_result)
     }
 }
@@ -77,8 +78,7 @@ impl JdtlsClient {
         watch_events_rx: Receiver<DebouncedEvent>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let workspace_dir = Path::new("/usr/src/app/jdtls_workspace");
-        tokio::fs::create_dir_all(&workspace_dir).await?;
-        tokio::fs::set_permissions(&workspace_dir, PermissionsExt::from_mode(0o777)).await?;
+        debug!("Creating Java process");
         let process = Command::new("java")
             .arg("-Declipse.application=org.eclipse.jdt.ls.core.id1")
             .arg("-Dosgi.bundles.defaultStartLevel=4")
@@ -99,6 +99,7 @@ impl JdtlsClient {
             .arg(workspace_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .arg("-XX:+UseG1GC")
             .arg("-XX:+UseStringDeduplication")
             .arg("-XX:+AggressiveOpts")
@@ -128,6 +129,7 @@ impl JdtlsClient {
                 .map(|&s| s.to_string())
                 .collect(),
             watch_events_rx,
+            DidOpenConfiguration::None,
         );
 
         let json_rpc_handler = JsonRpcHandler::new();

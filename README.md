@@ -58,8 +58,11 @@ services:
     volumes:
       - ${WORKSPACE_PATH}:/mnt/workspace
 ```
-
-You can find the reference for the API that `lsproxy` exposes [here](https://docs.lsproxy.dev/api-reference)
+### Configure an existing system
+You can also configure an existing system to run `lsproxy`. Add the following line in your dockerfile or run it as part of a startup script
+```bash
+curl -sSL https://github.com/agentic-labs/lsproxy/releases/latest/download/install-lsproxy.sh | sh
+```
 
 ### Explore your workspace!
 
@@ -104,6 +107,6 @@ We're looking to add new language support or better language servers so let us k
 |Python|`jedi-language-server`|https://github.com/pappasam/jedi-language-server|
 |Rust|`rust-analyzer`|https://github.com/rust-lang/rust-analyzer|
 |Typescript|`typescript-language-server`|https://github.com/typescript-language-server/typescript-language-server|
-|C/C++ (pending release)|`clangd`|https://clangd.llvm.org/|
-|Java (pending release)|`jdtls`|https://github.com/eclipse-jdtls/eclipse.jdt.ls|
+|C/C++|`clangd`|https://clangd.llvm.org/|
+|Java|`jdtls`|https://github.com/eclipse-jdtls/eclipse.jdt.ls|
 |Your Favorite Language | Awesome Language Server | https://github.com/agentic-labs/lsproxy/issues/new |

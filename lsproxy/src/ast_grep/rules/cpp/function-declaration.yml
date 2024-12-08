@@ -8,3 +8,6 @@ rule:
     inside:
       kind: declaration
       pattern: $CONTEXT
+      not:
+        inside:
+          kind: compound_statement

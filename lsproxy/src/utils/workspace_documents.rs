@@ -3,15 +3,16 @@ use log::{debug, error, warn};
 use lsp_types::Range;
 use notify_debouncer_mini::DebouncedEvent;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     error::Error,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::{
-    fs::read_to_string,
+    fs::read,
     sync::{broadcast::Receiver, RwLock},
 };
+use url::Url;
 
 pub const DEFAULT_EXCLUDE_PATTERNS: &[&str] = &[
     "**/node_modules",
@@ -35,10 +36,14 @@ pub const PYTHON_ROOT_FILES: &[&str] = &[
 pub const PYTHON_FILE_PATTERNS: &[&str] = &["**/*.py", "**/*.pyx", "**/*.pyi"];
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyx", "pyi"];
 
-pub const TYPESCRIPT_ROOT_FILES: &[&str] = &["tsconfig.json", "jsconfig.json", "package.json"];
+pub const TYPESCRIPT_AND_JAVASCRIPT_ROOT_FILES: &[&str] =
+    &["tsconfig.json", "jsconfig.json", "package.json"];
 
-pub const TYPESCRIPT_FILE_PATTERNS: &[&str] = &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
-pub const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
+pub const TYPESCRIPT_AND_JAVASCRIPT_FILE_PATTERNS: &[&str] =
+    &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
+pub const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx"];
+pub const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "jsx"];
+pub const TYPESCRIPT_AND_JAVASCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
 
 pub const RUST_ROOT_FILES: &[&str] = &["Cargo.toml"];
 pub const RUST_FILE_PATTERNS: &[&str] = &["**/*.rs"];
@@ -57,11 +62,20 @@ pub const CPP_ROOT_FILES: &[&str] = &[
 pub const C_AND_CPP_FILE_PATTERNS: &[&str] = &[
     "**/*.cpp", "**/*.cc", "**/*.c", "**/*.cxx", "**/*.h", "**/*.hpp", "**/*.hxx", "**/*.hh",
 ];
+
+pub const C_EXTENSIONS: &[&str] = &["c", "h"];
+pub const CPP_EXTENSIONS: &[&str] = &["cpp", "cc", "cxx", "h", "hpp", "hxx", "hh"];
 pub const C_AND_CPP_EXTENSIONS: &[&str] = &["cpp", "cc", "c", "cxx", "h", "hpp", "hxx", "hh"];
 
 pub const JAVA_ROOT_FILES: &[&str] = &["gradlew", ".git", "mvnw"];
 pub const JAVA_FILE_PATTERNS: &[&str] = &["**/*.java"];
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
+
+#[derive(Clone, PartialEq)]
+pub enum DidOpenConfiguration {
+    Lazy,
+    None,
+}
 
 #[async_trait::async_trait]
 pub trait WorkspaceDocuments: Send + Sync {
@@ -72,12 +86,17 @@ pub trait WorkspaceDocuments: Send + Sync {
     ) -> Result<String, Box<dyn Error + Send + Sync>>;
     async fn list_files(&self) -> Vec<PathBuf>;
     async fn update_patterns(&self, include_patterns: Vec<String>, exclude_patterns: Vec<String>);
+    fn get_did_open_configuration(&self) -> DidOpenConfiguration;
+    fn is_did_open_document(&self, file_path: &str) -> bool;
+    fn add_did_open_document(&mut self, file_path: &str);
 }
 
 pub struct WorkspaceDocumentsHandler {
     cache: Arc<RwLock<HashMap<PathBuf, Option<String>>>>,
     patterns: Arc<RwLock<(Vec<String>, Vec<String>)>>,
     root_path: PathBuf,
+    did_open_text_documents: HashSet<Url>,
+    did_open_configuration: DidOpenConfiguration,
 }
 
 impl WorkspaceDocumentsHandler {
@@ -86,6 +105,7 @@ impl WorkspaceDocumentsHandler {
         include_patterns: Vec<String>,
         exclude_patterns: Vec<String>,
         watch_events_rx: Receiver<DebouncedEvent>,
+        did_open_configuration: DidOpenConfiguration,
     ) -> Self {
         let cache = Arc::new(RwLock::new(HashMap::new()));
         let patterns = Arc::new(RwLock::new((include_patterns, exclude_patterns)));
@@ -109,6 +129,8 @@ impl WorkspaceDocumentsHandler {
             cache,
             patterns,
             root_path,
+            did_open_text_documents: HashSet::new(),
+            did_open_configuration,
         }
     }
 
@@ -136,8 +158,13 @@ impl WorkspaceDocumentsHandler {
         match cache.get(full_file_path) {
             Some(Some(content)) => Ok(content.clone()),
             _ => {
-                debug!("Cache miss for {:?}", full_file_path);
-                let content = read_to_string(full_file_path).await?;
+                let bytes = read(full_file_path).await?;
+
+                if String::from_utf8(bytes.clone()).is_err() {
+                    warn!("File {:?} contains invalid UTF-8", full_file_path);
+                }
+
+                let content = String::from_utf8_lossy(&bytes).into_owned();
                 cache.insert(full_file_path.clone(), Some(content.clone()));
                 Ok(content)
             }
@@ -218,11 +245,12 @@ impl WorkspaceDocuments for WorkspaceDocumentsHandler {
         if cache_read.is_empty() {
             drop(cache_read);
             let (include_patterns, exclude_patterns) = self.patterns.read().await.clone();
-            let file_paths = search_files(&self.root_path, include_patterns, exclude_patterns)
-                .unwrap_or_else(|err| {
-                    error!("Error searching files: {}", err);
-                    Vec::new()
-                });
+            let file_paths =
+                search_files(&self.root_path, include_patterns, exclude_patterns, true)
+                    .unwrap_or_else(|err| {
+                        error!("Error searching files: {}", err);
+                        Vec::new()
+                    });
             let mut cache_write = self.cache.write().await;
             for file_path in file_paths {
                 cache_write.insert(file_path, None);
@@ -236,6 +264,20 @@ impl WorkspaceDocuments for WorkspaceDocumentsHandler {
     async fn update_patterns(&self, include_patterns: Vec<String>, exclude_patterns: Vec<String>) {
         *self.patterns.write().await = (include_patterns, exclude_patterns);
         self.cache.write().await.clear();
+    }
+
+    fn get_did_open_configuration(&self) -> DidOpenConfiguration {
+        self.did_open_configuration.clone()
+    }
+
+    fn is_did_open_document(&self, file_path: &str) -> bool {
+        self.did_open_text_documents
+            .contains(&Url::from_file_path(file_path).unwrap())
+    }
+
+    fn add_did_open_document(&mut self, file_path: &str) {
+        self.did_open_text_documents
+            .insert(Url::from_file_path(file_path).unwrap());
     }
 }
 
@@ -260,8 +302,13 @@ mod tests {
         fs::write(&file_path, "Hello, world!\nThis is a test.")?;
         let (_, rx) = create_test_watcher_channels();
         // Initialize WorkspaceDocumentsHandler
-        let handler =
-            WorkspaceDocumentsHandler::new(dir.path(), vec!["*.txt".to_string()], vec![], rx);
+        let handler = WorkspaceDocumentsHandler::new(
+            dir.path(),
+            vec!["*.txt".to_string()],
+            vec![],
+            rx,
+            DidOpenConfiguration::None,
+        );
 
         // Test reading the entire document
         let content = handler.read_text_document(&file_path, None).await?;
@@ -298,6 +345,7 @@ mod tests {
             vec!["*.rs".to_string()],
             vec!["file2.txt".to_string()],
             rx,
+            DidOpenConfiguration::None,
         );
 
         // Test listing files based on patterns
@@ -333,8 +381,13 @@ mod tests {
         let (_, rx) = create_test_watcher_channels();
 
         // Initialize WorkspaceDocumentsHandler with initial patterns
-        let handler =
-            WorkspaceDocumentsHandler::new(dir.path(), vec!["*.txt".to_string()], vec![], rx);
+        let handler = WorkspaceDocumentsHandler::new(
+            dir.path(),
+            vec!["*.txt".to_string()],
+            vec![],
+            rx,
+            DidOpenConfiguration::None,
+        );
 
         // Verify initial file listing
         let initial_files = handler.list_files().await;
@@ -362,8 +415,13 @@ mod tests {
         fs::write(&file_path, "Line 1\nLine 2")?;
         let (_, rx) = create_test_watcher_channels();
         // Initialize WorkspaceDocumentsHandler
-        let handler =
-            WorkspaceDocumentsHandler::new(dir.path(), vec!["*.txt".to_string()], vec![], rx);
+        let handler = WorkspaceDocumentsHandler::new(
+            dir.path(),
+            vec!["*.txt".to_string()],
+            vec![],
+            rx,
+            DidOpenConfiguration::None,
+        );
 
         // Test reading with a range beyond the number of lines
         let range = Range {
@@ -392,8 +450,13 @@ mod tests {
 
         // Initialize WorkspaceDocumentsHandler
         let (_, rx) = create_test_watcher_channels();
-        let handler =
-            WorkspaceDocumentsHandler::new(dir.path(), vec!["*.txt".to_string()], vec![], rx);
+        let handler = WorkspaceDocumentsHandler::new(
+            dir.path(),
+            vec!["*.txt".to_string()],
+            vec![],
+            rx,
+            DidOpenConfiguration::None,
+        );
 
         // Test reading with character positions exceeding line length
         let range = Range {
@@ -421,8 +484,13 @@ mod tests {
 
         // Initialize WorkspaceDocumentsHandler
         let (_, rx) = create_test_watcher_channels();
-        let handler =
-            WorkspaceDocumentsHandler::new(dir.path(), vec!["*.txt".to_string()], vec![], rx);
+        let handler = WorkspaceDocumentsHandler::new(
+            dir.path(),
+            vec!["*.txt".to_string()],
+            vec![],
+            rx,
+            DidOpenConfiguration::None,
+        );
 
         // Test reading the entire empty document
         let content = handler.read_text_document(&file_path, None).await?;
@@ -457,6 +525,7 @@ mod tests {
             vec!["*.txt".to_string()],
             vec!["*.md".to_string()],
             rx,
+            DidOpenConfiguration::None,
         );
 
         // Test listing files with no matches
@@ -480,6 +549,7 @@ mod tests {
             vec!["*.rs".to_string()],
             vec!["file2.txt".to_string()],
             rx,
+            DidOpenConfiguration::None,
         );
 
         // Update patterns with empty include and exclude
