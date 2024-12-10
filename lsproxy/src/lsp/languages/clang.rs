@@ -6,6 +6,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::lsp::{ExpectedMessageKey, JsonRpc, Process};
 use crate::utils::file_utils::{search_directories, search_files};
 use crate::utils::workspace_documents::DidOpenConfiguration;
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
 use async_trait::async_trait;
 use fs::write;
 use log::debug;
-use lsp_types::InitializeParams;
+use lsp_types::{DidOpenTextDocumentParams, InitializeParams};
 use notify_debouncer_mini::DebouncedEvent;
 use tokio::{process::Command, sync::broadcast::Receiver};
 use url::Url;
@@ -90,6 +91,39 @@ impl LspClient for ClangdClient {
             })),
             ..Default::default()
         }
+    }
+
+    async fn text_document_did_open(
+        &mut self,
+        item: lsp_types::TextDocumentItem,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let params = DidOpenTextDocumentParams {
+            text_document: item.clone(),
+        };
+        let notification = self
+            .get_json_rpc()
+            .create_notification("textDocument/didOpen", serde_json::to_value(params)?);
+        let message = format!(
+            "Content-Length: {}\r\n\r\n{}",
+            notification.len(),
+            notification
+        );
+        let notification_send_result = self.get_process().send(&message).await;
+        let expected_message = ExpectedMessageKey {
+            method: "textDocument/clangd.fileStatus".to_string(),
+            params: serde_json::json!({
+                "state": "idle",
+                "uri": item.uri.to_string(),
+            }),
+        };
+        let mut notification_rx = self
+            .get_pending_requests()
+            .add_notification(expected_message)
+            .await?;
+        tokio::time::timeout(std::time::Duration::from_secs(30), notification_rx.recv())
+            .await
+            .map_err(|e| format!("Failed to receive notification: {}", e))??;
+        notification_send_result
     }
 }
 

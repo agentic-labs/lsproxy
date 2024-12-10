@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-LSPROXY_VERSION="0.1.10"
+LSPROXY_VERSION="0.1.11"
 
 # Function to detect architecture
 detect_arch() {
@@ -114,7 +114,7 @@ install_lsproxy() {
 # Function to install ast_grep configuration
 install_ast_grep_config() {
     local config_url="https://github.com/agentic-labs/lsproxy/releases/download/${LSPROXY_VERSION}/lsproxy-${LSPROXY_VERSION}-ast-grep-rules.tar.gz"
-    local dest_dir="/usr/src/ast_grep"
+    local dest_dir="/usr/src"
 
     echo "Downloading ast_grep configuration and rules..."
     mkdir -p "$dest_dir"

@@ -73,7 +73,7 @@ RUN curl -L -o /tmp/jdt-language-server.tar.gz https://www.eclipse.org/downloads
     rm /tmp/jdt-language-server.tar.gz
 
 # Copy the binary
-COPY --from=builder --chown=1000:1000 /usr/src/app/target/release/lsproxy .
+COPY --from=builder /usr/src/app/target/release/lsproxy /usr/local/bin/lsproxy
 
 # Copy ast-grep rules
 COPY --chown=1000:1000 ./src/ast_grep  /usr/src/ast_grep
@@ -81,4 +81,4 @@ COPY --chown=1000:1000 ./src/ast_grep  /usr/src/ast_grep
 EXPOSE 4444
 ENV RUST_LOG=info
 ENV RA_LOG="/tmp/rust-analyzer.log"
-CMD ["./lsproxy"]
+CMD ["lsproxy"]

@@ -90,7 +90,7 @@ impl JsonRpc for JsonRpcHandler {
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub struct ExpectedMessageKey {
     pub method: String,
-    pub message: String,
+    pub params: Value,
 }
 
 #[derive(Clone)]

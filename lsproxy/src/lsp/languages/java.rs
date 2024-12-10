@@ -63,7 +63,10 @@ impl LspClient for JdtlsClient {
             .get_pending_requests()
             .add_notification(ExpectedMessageKey {
                 method: "language/status".to_string(),
-                message: "ServiceReady".to_string(),
+                params: serde_json::json!({
+                    "type": "ServiceReady",
+                    "message": "ServiceReady"
+                }),
             })
             .await?;
         debug!("Java: waiting for service ready notification. This may take a minute...");
