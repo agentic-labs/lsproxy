@@ -123,13 +123,7 @@ TOOLS = [
         description="Get a list of all files in the workspace",
         inputSchema={
             "type": "object",
-            "properties": {
-                "glob": {
-                    "type": "string",
-                    "description": "Optional glob pattern to filter files",
-                    "example": "**/*.py"
-                }
-            }
+            "properties": {}
         }
     ),
     Tool(
