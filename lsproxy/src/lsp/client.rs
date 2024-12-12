@@ -131,7 +131,7 @@ pub trait LspClient: Send {
                                 );
                             }
                         } else if let Some(params) = message.params.clone() {
-                            let message_key = ExpectedMessageKey {
+                            let key = ExpectedMessageKey {
                                 method: message.method.clone().unwrap(),
                                 params: params,
                             };

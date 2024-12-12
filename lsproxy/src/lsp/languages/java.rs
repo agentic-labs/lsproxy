@@ -1,7 +1,7 @@
 use std::{error::Error, path::Path, process::Stdio};
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, info};
 use lsp_types::InitializeResult;
 use notify_debouncer_mini::DebouncedEvent;
 use tokio::{process::Command, sync::broadcast::Receiver};
@@ -69,7 +69,7 @@ impl LspClient for JdtlsClient {
                 }),
             })
             .await?;
-        debug!("Java: waiting for service ready notification. This may take a minute...");
+        info!("Java: waiting for service ready notification. This may take a minute...");
         tokio::time::timeout(std::time::Duration::from_secs(180), notification_rx.recv()).await??;
         Ok(init_result)
     }
@@ -81,8 +81,9 @@ impl JdtlsClient {
         watch_events_rx: Receiver<DebouncedEvent>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let workspace_dir = Path::new("/usr/src/app/jdtls_workspace");
-        debug!("Creating Java process");
+        info!("Creating Java process with root path: {:?}", root_path);
         let process = Command::new("java")
+            .current_dir(root_path)
             .arg("-Declipse.application=org.eclipse.jdt.ls.core.id1")
             .arg("-Dosgi.bundles.defaultStartLevel=4")
             .arg("-Declipse.product=org.eclipse.jdt.ls.core.product")

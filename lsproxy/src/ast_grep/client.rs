@@ -10,7 +10,7 @@ impl AstGrepClient {
     async fn get_matches(
         &self,
         file_name: &str,
-    ) -> Result<Vec<AstGrepMatch>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<AstGrepRuleMatch>, Box<dyn std::error::Error>> {
         let command_result = Command::new("ast-grep")
             .arg("scan")
             .arg("--config")
