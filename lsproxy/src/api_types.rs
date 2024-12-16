@@ -265,6 +265,34 @@ pub struct ReferencesResponse {
     pub context: Option<Vec<CodeContext>>,
 }
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct GetCallHierarchyRequest {
+    pub identifier_position: FilePosition,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CallLocation {
+    pub path: String,
+    pub name: String,
+    pub range_start: Position,
+    pub range_end: Position,
+    pub selection_range_start: Position,
+    pub selection_range_end: Position,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CallReference {
+    pub from: CallLocation,
+    pub ranges: Vec<Position>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CallHierarchyResponse {
+    pub incoming_calls: Vec<CallReference>,
+    pub outgoing_calls: Vec<CallReference>,
+    pub item: CallLocation,
+}
+
 pub type SymbolResponse = Vec<Symbol>;
 
 impl From<(GotoDefinitionResponse, Option<Vec<CodeContext>>, bool)> for DefinitionResponse {

@@ -5,6 +5,8 @@ use crate::utils::file_utils::{detect_language_string, search_directories};
 use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
     PartialResultParams, Position, PublishDiagnosticsClientCapabilities, ReferenceContext,
@@ -297,6 +299,113 @@ pub trait LspClient: Send {
         let references: Vec<Location> = serde_json::from_value(result)?;
         debug!("Received references response");
         Ok(references)
+    }
+
+    async fn prepare_call_hierarchy(
+        &mut self,
+        file_path: &str,
+        position: Position,
+    ) -> Result<Vec<CallHierarchyItem>, Box<dyn Error + Send + Sync>> {
+        let needs_open = {
+            let workspace_documents = self.get_workspace_documents();
+            workspace_documents.get_did_open_configuration() == DidOpenConfiguration::Lazy
+                && !workspace_documents.is_did_open_document(file_path)
+        };
+
+        if needs_open {
+            let document_text = self
+                .get_workspace_documents()
+                .read_text_document(&PathBuf::from(file_path), None)
+                .await?;
+
+            self.text_document_did_open(TextDocumentItem {
+                uri: Url::from_file_path(file_path).unwrap(),
+                language_id: detect_language_string(file_path)?,
+                version: 1,
+                text: document_text,
+            })
+            .await?;
+
+            self.get_workspace_documents()
+                .add_did_open_document(file_path);
+        }
+
+        let params = CallHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::from_file_path(file_path).map_err(|_| "Invalid file path")?,
+                },
+                position,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        let result = self
+            .send_request(
+                "textDocument/prepareCallHierarchy",
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else {
+            let items: Vec<CallHierarchyItem> = serde_json::from_value(result)?;
+            debug!("Received call hierarchy prepare response");
+            Ok(items)
+        }
+    }
+
+    async fn incoming_calls(
+        &mut self,
+        item: &CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyIncomingCall>, Box<dyn Error + Send + Sync>> {
+        let params = CallHierarchyIncomingCallsParams {
+            item: item.clone(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = self
+            .send_request(
+                "callHierarchy/incomingCalls",
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else {
+            let calls: Vec<CallHierarchyIncomingCall> = serde_json::from_value(result)?;
+            debug!("Received incoming calls response");
+            Ok(calls)
+        }
+    }
+
+    async fn outgoing_calls(
+        &mut self,
+        item: &CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyOutgoingCall>, Box<dyn Error + Send + Sync>> {
+        let params = CallHierarchyOutgoingCallsParams {
+            item: item.clone(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = self
+            .send_request(
+                "callHierarchy/outgoingCalls",
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+
+        if result.is_null() {
+            Ok(vec![])
+        } else {
+            let calls: Vec<CallHierarchyOutgoingCall> = serde_json::from_value(result)?;
+            debug!("Received outgoing calls response");
+            Ok(calls)
+        }
     }
 
     fn get_process(&mut self) -> &mut ProcessHandler;

@@ -21,11 +21,11 @@ mod lsp;
 mod utils;
 
 use crate::api_types::{
-    get_mount_dir, set_global_mount_dir, DefinitionResponse, FilePosition, FileSymbolsRequest,
-    GetDefinitionRequest, GetReferencesRequest, ReferencesResponse, SupportedLanguages, Symbol,
-    SymbolResponse,
+    get_mount_dir, set_global_mount_dir, CallHierarchyResponse, CallLocation, CallReference,
+    DefinitionResponse, FilePosition, FileSymbolsRequest, GetCallHierarchyRequest, GetDefinitionRequest,
+    GetReferencesRequest, ReferencesResponse, SupportedLanguages, Symbol, SymbolResponse,
 };
-use crate::handlers::{definitions_in_file, find_definition, find_references, list_files};
+use crate::handlers::{definitions_in_file, find_definition, find_references, list_files, get_call_hierarchy};
 use crate::lsp::manager::Manager;
 // use crate::utils::doc_utils::make_code_sample;
 
@@ -50,15 +50,18 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::find_references,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::get_call_hierarchy,
     ),
     components(
         schemas(
             FileSymbolsRequest,
             GetDefinitionRequest,
             GetReferencesRequest,
+            GetCallHierarchyRequest,
             SupportedLanguages,
             DefinitionResponse,
             ReferencesResponse,
+            CallHierarchyResponse,
             SymbolResponse,
             FilePosition,
             Position,
@@ -66,6 +69,8 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             ErrorResponse,
             CodeContext,
             FileRange,
+            CallLocation,
+            CallReference,
         )
     ),
     tags(
@@ -174,6 +179,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(get().to(list_files))),
                 ("/workspace/read-source-code", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(read_source_code))),
+                ("/symbol/call-hierarchy", Some(Method::Post)) =>
+                    api_scope.service(resource(path).route(post().to(get_call_hierarchy))),
                 (p, m) => panic!(
                     "Invalid path configuration for {}: {:?}. Ensure the OpenAPI spec matches your handlers.", 
                     p,

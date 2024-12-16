@@ -13,7 +13,10 @@ use crate::utils::workspace_documents::{
     PYTHON_FILE_PATTERNS, RUST_FILE_PATTERNS, TYPESCRIPT_AND_JAVASCRIPT_FILE_PATTERNS,
 };
 use log::{debug, error, warn};
-use lsp_types::{GotoDefinitionResponse, Location, Position, Range};
+use lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, GotoDefinitionResponse,
+    Location, Position, Range,
+};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
@@ -288,6 +291,71 @@ impl Manager {
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Source code retrieval failed: {}", e))
             })
+    }
+
+    pub async fn prepare_call_hierarchy(
+        &self,
+        file_path: &str,
+        position: Position,
+    ) -> Result<Vec<CallHierarchyItem>, LspManagerError> {
+        let workspace_files = self.list_files().await.map_err(|e| {
+            LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
+        })?;
+
+        if !workspace_files.iter().any(|f| f == file_path) {
+            return Err(LspManagerError::FileNotFound(file_path.to_string()));
+        }
+
+        let full_path = get_mount_dir().join(&file_path);
+        let full_path_str = full_path.to_str().unwrap_or_default();
+        let lsp_type = detect_language(full_path_str).map_err(|e| {
+            LspManagerError::InternalError(format!("Language detection failed: {}", e))
+        })?;
+        let client = self
+            .get_client(lsp_type)
+            .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
+        let mut locked_client = client.lock().await;
+
+        locked_client
+            .prepare_call_hierarchy(full_path_str, position)
+            .await
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Call hierarchy preparation failed: {}", e))
+            })
+    }
+
+    pub async fn incoming_calls(
+        &self,
+        item: &CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyIncomingCall>, LspManagerError> {
+        let lsp_type = detect_language(item.uri.path()).map_err(|e| {
+            LspManagerError::InternalError(format!("Language detection failed: {}", e))
+        })?;
+        let client = self
+            .get_client(lsp_type)
+            .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
+        let mut locked_client = client.lock().await;
+
+        locked_client.incoming_calls(item).await.map_err(|e| {
+            LspManagerError::InternalError(format!("Incoming calls retrieval failed: {}", e))
+        })
+    }
+
+    pub async fn outgoing_calls(
+        &self,
+        item: &CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyOutgoingCall>, LspManagerError> {
+        let lsp_type = detect_language(item.uri.path()).map_err(|e| {
+            LspManagerError::InternalError(format!("Language detection failed: {}", e))
+        })?;
+        let client = self
+            .get_client(lsp_type)
+            .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
+        let mut locked_client = client.lock().await;
+
+        locked_client.outgoing_calls(item).await.map_err(|e| {
+            LspManagerError::InternalError(format!("Outgoing calls retrieval failed: {}", e))
+        })
     }
 }
 
