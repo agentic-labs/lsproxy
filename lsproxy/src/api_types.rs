@@ -267,7 +267,16 @@ pub struct ReferencesResponse {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GetCallHierarchyRequest {
+    /// The position of the function/method identifier to analyze
+    // #[schema(example = {"path": "src/calculator.py", "position": {"line": 8, "character": 12}})]
     pub identifier_position: FilePosition,
+
+    /// Whether to use manual AST-based analysis instead of LSP server implementation.
+    /// When true, uses tree-sitter based analysis which may work better for some languages.
+    /// When false (default), uses the language server's implementation if available.
+    #[serde(default)]
+    #[schema(example = false)]
+    pub use_manual_hierarchy: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

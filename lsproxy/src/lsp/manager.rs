@@ -300,6 +300,7 @@ impl Manager {
         &self,
         file_path: &str,
         position: Position,
+        use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyItem>, LspManagerError> {
         let workspace_files = self.list_files().await.map_err(|e| {
             LspManagerError::InternalError(format!("Workspace file retrieval failed: {}", e))
@@ -320,7 +321,7 @@ impl Manager {
         let mut locked_client = client.lock().await;
 
         locked_client
-            .prepare_call_hierarchy(full_path_str, position)
+            .prepare_call_hierarchy(full_path_str, position, use_manual_hierarchy)
             .await
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Call hierarchy preparation failed: {}", e))
@@ -411,6 +412,7 @@ impl Manager {
     pub async fn outgoing_calls(
         &self,
         item: &CallHierarchyItem,
+        use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyOutgoingCall>, LspManagerError> {
         let lsp_type = detect_language(item.uri.path()).map_err(|e| {
             LspManagerError::InternalError(format!("Language detection failed: {}", e))
@@ -420,7 +422,7 @@ impl Manager {
             .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
         let mut locked_client = client.lock().await;
 
-        locked_client.outgoing_calls(item).await.map_err(|e| {
+        locked_client.outgoing_calls(item, use_manual_hierarchy).await.map_err(|e| {
             LspManagerError::InternalError(format!("Outgoing calls retrieval failed: {}", e))
         })
     }
