@@ -687,42 +687,71 @@ pub trait LspClient: Send {
     }
 
     fn get_object_range(&self, obj: &Object) -> Result<lsp_types::Range, Box<dyn Error + Send + Sync>> {
-        let tree = &obj.tree;
         let source = &obj.source;
         
-        // Get the node at the range
-        let node = tree.root_node()
-            .descendant_for_byte_range(obj.node_range.0, obj.node_range.1)
-            .ok_or("Node not found")?;
+        // Pre-calculate line offsets for the entire source
+        let mut line_offsets = Vec::new();
+        let mut offset = 0;
+        line_offsets.push(0); // First line starts at 0
         
-        // Convert start position
-        let mut start_row = 0;
-        let mut start_col = 0;
-        let mut current_offset = 0;
-        
-        for (i, line) in source[..obj.node_range.0].lines().enumerate() {
-            start_row = i;
-            current_offset += line.len() + 1; // +1 for newline
+        for line in source.split('\n') {
+            offset += line.len() + 1; // +1 for \n
+            line_offsets.push(offset);
         }
-        start_col = obj.node_range.0 - (current_offset - 1);
         
-        // Convert end position
-        let mut end_row = start_row;
-        let mut end_col = 0;
-        for (i, line) in source[..obj.node_range.1].lines().enumerate() {
-            end_row = i;
-            current_offset = line.len();
-        }
-        end_col = obj.node_range.1 - (current_offset - 1);
+        // Binary search to find line number for a byte offset
+        let find_line = |byte_offset: usize| -> (usize, usize) {
+            match line_offsets.binary_search(&byte_offset) {
+                Ok(line) => (line, 0), // Exactly at line start
+                Err(line) => {
+                    let line = if line > 0 { line - 1 } else { 0 };
+                    let col = byte_offset - line_offsets[line];
+                    (line, col)
+                }
+            }
+        };
+        
+        // Convert byte offsets to UTF-16 code unit offsets for LSP
+        let byte_to_utf16_col = |line_start: usize, byte_col: usize| {
+            let line_str = if let Some((start, end)) = source[line_start..].split_once('\n') {
+                start
+            } else {
+                &source[line_start..]
+            };
+            
+            if byte_col > line_str.len() {
+                return byte_col; // Fallback for invalid offset
+            }
+            
+            line_str[..byte_col].chars()
+                .map(|c| {
+                    if c as u32 >= 0x10000 {
+                        2 // Surrogate pair
+                    } else {
+                        1 // Single UTF-16 code unit
+                    }
+                })
+                .sum()
+        };
+        
+        // Calculate start position
+        let (start_line, start_byte_col) = find_line(obj.node_range.0);
+        let start_line_offset = line_offsets[start_line];
+        let start_char = byte_to_utf16_col(start_line_offset, start_byte_col);
+        
+        // Calculate end position
+        let (end_line, end_byte_col) = find_line(obj.node_range.1);
+        let end_line_offset = line_offsets[end_line];
+        let end_char = byte_to_utf16_col(end_line_offset, end_byte_col);
         
         Ok(lsp_types::Range {
             start: lsp_types::Position {
-                line: start_row as u32,
-                character: start_col as u32,
+                line: start_line as u32,
+                character: start_char as u32,
             },
             end: lsp_types::Position {
-                line: end_row as u32,
-                character: end_col as u32,
+                line: end_line as u32,
+                character: end_char as u32,
             },
         })
     }
