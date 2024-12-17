@@ -13,10 +13,13 @@ use crate::utils::workspace_documents::{
     PYTHON_FILE_PATTERNS, RUST_FILE_PATTERNS, TYPESCRIPT_AND_JAVASCRIPT_FILE_PATTERNS,
 };
 use log::{debug, error, warn};
+use std::path::PathBuf;
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, GotoDefinitionResponse,
-    Location, Position, Range,
+    Location, Position, Range, SymbolKind,
 };
+
+use crate::ast_grep::call_hierarchy::find_enclosing_function;
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
@@ -336,9 +339,73 @@ impl Manager {
             .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
         let mut locked_client = client.lock().await;
 
-        locked_client.incoming_calls(item).await.map_err(|e| {
-            LspManagerError::InternalError(format!("Incoming calls retrieval failed: {}", e))
-        })
+        // Get raw references
+        let refs = locked_client.text_document_reference(
+            item.uri.path(),
+            item.selection_range.start,
+        ).await.map_err(|e| {
+            LspManagerError::InternalError(format!("Reference retrieval failed: {}", e))
+        })?;
+
+        // Group references by their enclosing function
+        let mut incoming_calls = std::collections::HashMap::new();
+        for location in refs {
+            match find_enclosing_function(&location).await {
+                Ok(Some(caller)) => {
+                    let caller_key = (caller.uri.to_string(), caller.range.start.line);
+                    let entry = incoming_calls.entry(caller_key).or_insert_with(|| {
+                        CallHierarchyIncomingCall {
+                            from: caller,
+                            from_ranges: vec![],
+                        }
+                    });
+                    entry.from_ranges.push(location.range);
+                }
+                Ok(None) => {
+                    // If no enclosing function found, use the file's package/module scope
+                    let file_scope = CallHierarchyItem {
+                        name: PathBuf::from(location.uri.path())
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("module")
+                            .to_string(),
+                        kind: lsp_types::SymbolKind::MODULE,
+                        tags: None,
+                        detail: Some(format!("module • {}", 
+                            PathBuf::from(location.uri.path())
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("")
+                        )),
+                        uri: location.uri.clone(),
+                        range: lsp_types::Range::new(
+                            lsp_types::Position::new(0, 0),
+                            lsp_types::Position::new(0, 0),
+                        ),
+                        selection_range: lsp_types::Range::new(
+                            lsp_types::Position::new(0, 0),
+                            lsp_types::Position::new(0, 0),
+                        ),
+                        data: None,
+                    };
+                    let key = (location.uri.to_string(), 0);
+                    let entry = incoming_calls.entry(key).or_insert_with(|| {
+                        CallHierarchyIncomingCall {
+                            from: file_scope,
+                            from_ranges: vec![],
+                        }
+                    });
+                    entry.from_ranges.push(location.range);
+                }
+                Err(e) => {
+                    return Err(LspManagerError::InternalError(
+                        format!("AST analysis failed: {}", e)
+                    ));
+                }
+            }
+        }
+
+        Ok(incoming_calls.into_values().collect())
     }
 
     pub async fn outgoing_calls(

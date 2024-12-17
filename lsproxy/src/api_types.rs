@@ -287,10 +287,15 @@ pub struct CallReference {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct CallHierarchyResponse {
+pub struct CallHierarchyItemDetails {
+    pub item: CallLocation,
     pub incoming_calls: Vec<CallReference>,
     pub outgoing_calls: Vec<CallReference>,
-    pub item: CallLocation,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CallHierarchyResponse {
+    pub items: Vec<CallHierarchyItemDetails>,
 }
 
 pub type SymbolResponse = Vec<Symbol>;

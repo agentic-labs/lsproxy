@@ -2,17 +2,15 @@ use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
 use log::{error, info};
 use lsp_types::{
-    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
-    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    Position as LspPosition, TextDocumentPositionParams,
+    CallHierarchyItem,    
+    Position as LspPosition,
 };
-use serde::{Deserialize, Serialize};
+
 
 use crate::api_types::{
-    CallHierarchyResponse, CallLocation, CallReference, ErrorResponse, FilePosition,
-    GetCallHierarchyRequest, Position,
+    CallHierarchyItemDetails, CallHierarchyResponse, CallLocation, CallReference, ErrorResponse, FilePosition, GetCallHierarchyRequest, Position
 };
-use crate::lsp::manager::{LspManagerError, Manager};
+use crate::lsp::manager::LspManagerError;
 use crate::utils::file_utils::uri_to_relative_path_string;
 use crate::AppState;
 
@@ -56,54 +54,62 @@ pub async fn get_call_hierarchy(
 
     match prepare_result {
         Ok(items) if !items.is_empty() => {
-            let item = &items[0]; // Take first item as per gopls implementation
+            let mut hierarchies = Vec::new();
 
-            // Get incoming calls
-            let incoming_result = manager.incoming_calls(item).await;
-            let outgoing_result = manager.outgoing_calls(item).await;
+            for item in items {
+                // Get incoming and outgoing calls for each item
+                let incoming_result = manager.incoming_calls(&item).await;
+                let outgoing_result = manager.outgoing_calls(&item).await;
 
-            match (incoming_result, outgoing_result) {
-                (Ok(incoming), Ok(outgoing)) => {
-                    let response = CallHierarchyResponse {
-                        incoming_calls: incoming
-                            .into_iter()
-                            .map(|call| CallReference {
-                                from: convert_hierarchy_item(&call.from),
-                                ranges: call
-                                    .from_ranges
-                                    .into_iter()
-                                    .map(|r| Position {
-                                        line: r.start.line,
-                                        character: r.start.character,
-                                    })
-                                    .collect(),
-                            })
-                            .collect(),
-                        outgoing_calls: outgoing
-                            .into_iter()
-                            .map(|call| CallReference {
-                                from: convert_hierarchy_item(&call.to),
-                                ranges: call
-                                    .from_ranges
-                                    .into_iter()
-                                    .map(|r| Position {
-                                        line: r.start.line,
-                                        character: r.start.character,
-                                    })
-                                    .collect(),
-                            })
-                            .collect(),
-                        item: convert_hierarchy_item(item),
-                    };
-
-                    HttpResponse::Ok().json(response)
+                match (incoming_result, outgoing_result) {
+                    (Ok(incoming), Ok(outgoing)) => {
+                        let hierarchy_item = CallHierarchyItemDetails {
+                            item: convert_hierarchy_item(&item),
+                            incoming_calls: incoming
+                                .into_iter()
+                                .map(|call| CallReference {
+                                    from: convert_hierarchy_item(&call.from),
+                                    ranges: call
+                                        .from_ranges
+                                        .into_iter()
+                                        .map(|r| Position {
+                                            line: r.start.line,
+                                            character: r.start.character,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                            outgoing_calls: outgoing
+                                .into_iter()
+                                .map(|call| CallReference {
+                                    from: convert_hierarchy_item(&call.to),
+                                    ranges: call
+                                        .from_ranges
+                                        .into_iter()
+                                        .map(|r| Position {
+                                            line: r.start.line,
+                                            character: r.start.character,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                        };
+                        hierarchies.push(hierarchy_item);
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        error!("Failed to get call hierarchy details for item: {}", e);
+                        // Continue with next item instead of failing completely
+                        continue;
+                    }
                 }
-                (Err(e), _) | (_, Err(e)) => {
-                    error!("Failed to get call hierarchy details: {}", e);
-                    HttpResponse::InternalServerError().json(ErrorResponse {
-                        error: format!("Failed to get call hierarchy details: {}", e),
-                    })
-                }
+            }
+
+            if hierarchies.is_empty() {
+                HttpResponse::BadRequest().json(ErrorResponse {
+                    error: "Failed to get call hierarchy details for any items".to_string(),
+                })
+            } else {
+                HttpResponse::Ok().json(CallHierarchyResponse { items: hierarchies })
             }
         }
         Ok(_) => HttpResponse::BadRequest().json(ErrorResponse {
@@ -196,7 +202,26 @@ mod test {
         let hierarchy_response: CallHierarchyResponse = serde_json::from_slice(&bytes).unwrap();
 
         // Basic validation - actual values will depend on the test files
-        assert!(hierarchy_response.item.name.contains("Graph"));
+        assert!(!hierarchy_response.items.is_empty(), "Should have at least one item");
+        assert!(
+            hierarchy_response.items[0].item.name.contains("Graph"),
+            "First item should be Graph class"
+        );
+        
+        // Validate structure of first item
+        let first_item = &hierarchy_response.items[0];
+        assert!(
+            first_item.incoming_calls.len() + first_item.outgoing_calls.len() > 0,
+            "Should have some calls"
+        );
+        
+        // Validate call reference structure
+        if let Some(call) = first_item.incoming_calls.first().or(first_item.outgoing_calls.first()) {
+            assert!(!call.from.path.is_empty(), "Call reference should have a path");
+            assert!(!call.from.name.is_empty(), "Call reference should have a name");
+            assert!(!call.ranges.is_empty(), "Call reference should have ranges");
+        }
+        
         Ok(())
     }
 
@@ -231,7 +256,26 @@ mod test {
         let hierarchy_response: CallHierarchyResponse = serde_json::from_slice(&bytes).unwrap();
 
         // Basic validation - actual values will depend on the test files
-        assert!(hierarchy_response.item.name.contains("Node"));
+        assert!(!hierarchy_response.items.is_empty(), "Should have at least one item");
+        assert!(
+            hierarchy_response.items[0].item.name.contains("Node"),
+            "First item should be Node struct"
+        );
+        
+        // Validate structure of first item
+        let first_item = &hierarchy_response.items[0];
+        assert!(
+            first_item.incoming_calls.len() + first_item.outgoing_calls.len() > 0,
+            "Should have some calls"
+        );
+        
+        // Validate call reference structure
+        if let Some(call) = first_item.incoming_calls.first().or(first_item.outgoing_calls.first()) {
+            assert!(!call.from.path.is_empty(), "Call reference should have a path");
+            assert!(!call.from.name.is_empty(), "Call reference should have a name");
+            assert!(!call.ranges.is_empty(), "Call reference should have ranges");
+        }
+        
         Ok(())
     }
 }
