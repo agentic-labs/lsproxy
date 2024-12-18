@@ -20,6 +20,7 @@ pub struct Package {
 pub struct Object {
     pub name: String,
     pub package_path: String,
+    pub file_path: String,  // Actual path to the file containing this object
     pub range: Range,
     pub node_range: (usize, usize), // start_byte, end_byte
     pub source: Arc<String>,
@@ -319,8 +320,45 @@ pub trait LspClient: Send {
             )
             .await?;
 
-        let references: Vec<Location> = serde_json::from_value(result)?;
-        debug!("Received references response");
+        debug!(
+            "Received response from LSP server for references at {}:{}",
+            file_path, position.line
+        );
+
+        let references: Vec<Location> = if result.is_null() {
+            debug!(
+                "LSP server returned null for references at {}:{} - treating as empty result",
+                file_path, position.line
+            );
+            Vec::new()
+        } else {
+            debug!(
+                "LSP server returned non-null response for references, attempting to parse"
+            );
+            match serde_json::from_value::<Vec<Location>>(result.clone()) {
+                Ok(locs) => {
+                    debug!(
+                        "Successfully parsed {} reference locations from LSP response",
+                        locs.len()
+                    );
+                    locs
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to parse LSP response for references at {}:{}: {}. Raw response: {:?}",
+                        file_path, position.line, e, result
+                    );
+                    return Err(e.into());
+                }
+            }
+        };
+
+        debug!(
+            "Returning {} references for {}:{}",
+            references.len(),
+            file_path,
+            position.line
+        );
         Ok(references)
     }
 
@@ -430,7 +468,7 @@ pub trait LspClient: Send {
                     debug!("Function range: {:?}", range);
                     
                     // Create the CallHierarchyItem using the definition object
-                    let filename = std::path::Path::new(&def_obj.package_path)
+                    let filename = std::path::Path::new(&def_obj.file_path)
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy();
@@ -441,7 +479,7 @@ pub trait LspClient: Send {
                         kind: lsp_types::SymbolKind::FUNCTION,
                         tags: None,
                         detail: Some(detail),
-                        uri: Url::from_file_path(&def_obj.package_path).map_err(|_| "Invalid file path")?,
+                        uri: Url::from_file_path(&def_obj.file_path).map_err(|_| "Invalid file path")?,
                         range,
                         selection_range: range,
                         data: None,
@@ -613,7 +651,7 @@ pub trait LspClient: Send {
         let mut current_dir = path.parent().ok_or("Invalid file path")?;
         
         // Start with the immediate directory
-        let mut package_path = current_dir.to_string_lossy().to_string();
+        let mut package_path = current_dir.to_str().unwrap_or("").to_string();
         
         // Walk up the directory tree looking for package identifiers
         while let Some(parent) = current_dir.parent() {
@@ -704,19 +742,32 @@ pub trait LspClient: Send {
                 // Verify this is a function call
                 if let Some(parent) = initial_node.parent() {
                     if parent.kind() == "call" {
-                    // if parent.kind() == "function_definition" {
-                        debug!("get_referenced_object: Confirmed as function call");
+                        debug!("get_referenced_object: Found function call");
                         Some(Object {
                             name,
                             package_path: pkg.path.clone(),
+                            file_path: file_path.to_string(),
                             range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
                             node_range: (initial_node.start_byte(), initial_node.end_byte()),
                             source: source.clone(),
                             tree: tree.clone(),
                             is_reference: true,
                         })
+                    } else if parent.kind() == "function_definition" {
+                        debug!("get_referenced_object: Found function definition");
+                        // Use the parent node (full function) for the range and node_range
+                        Some(Object {
+                            name,
+                            package_path: pkg.path.clone(),
+                            file_path: file_path.to_string(),
+                            range: self.tree_sitter_to_lsp_range(&parent, &source)?,
+                            node_range: (parent.start_byte(), parent.end_byte()),
+                            source: source.clone(),
+                            tree: tree.clone(),
+                            is_reference: false,
+                        })
                     } else {
-                        debug!("get_referenced_object: Not a function call, parent is: {}", parent.kind());
+                        debug!("get_referenced_object: Node parent is: {}", parent.kind());
                         None
                     }
                 } else {
@@ -737,6 +788,7 @@ pub trait LspClient: Send {
                         return Ok(Some(Object {
                             name,
                             package_path: pkg.path.clone(),
+                            file_path: file_path.to_string(),
                             range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
                             node_range: (initial_node.start_byte(), initial_node.end_byte()),
                             source: source.clone(),
@@ -1058,7 +1110,7 @@ pub trait LspClient: Send {
 
     async fn find_function_calls(&mut self, obj: &Object) -> Result<Vec<lsp_types::Range>, Box<dyn Error + Send + Sync>> {
         // Query to find function calls in the AST
-        let query_str = self.get_function_call_query(&obj.package_path)?;
+        let query_str = self.get_function_call_query(&obj.file_path)?;
 
         let query = Query::new(obj.tree.language(), query_str)?;
         let mut cursor = QueryCursor::new();
@@ -1134,7 +1186,8 @@ pub trait LspClient: Send {
     }
 
     fn get_function_call_query(&self, file_path: &str) -> Result<&'static str, Box<dyn Error + Send + Sync>> {
-        match detect_language_string(file_path)?.as_str() {
+        let path = PathBuf::from(file_path);
+        match detect_language_string(path.to_str().ok_or("Invalid path")?)?.as_str() {
             "python" => Ok(self.get_python_function_call_query()),
             "typescript" | "javascript" => Ok(self.get_typescript_function_call_query()),
             _ => Err("Unsupported language".into()),
@@ -1143,29 +1196,8 @@ pub trait LspClient: Send {
 
     fn get_python_function_call_query(&self) -> &'static str {
         r#"
-            ; Regular function calls
-            (call
-              function: (identifier) @func_name) @call
-
-            ; Method calls
-            (call
-              function: (attribute
-                object: (_)
-                attribute: (identifier) @func_name)) @call
-
-            ; Decorator calls
-            (decorator
-              decorator: (identifier) @func_name) @call
-
-            ; Decorator with calls
-            (decorator
-              decorator: (call
-                function: (identifier) @func_name)) @call
-
-            ; Class constructor calls
-            (call
-              function: (identifier) @class_name
-              [(argument_list) (keyword_argument)]) @call
+            ; Any function or method call
+            (call) @call
         "#
     }
 
