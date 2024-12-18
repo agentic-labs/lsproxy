@@ -1,9 +1,10 @@
 use std::path::PathBuf;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use lsp_types::{CallHierarchyItem, Location, Position, Range, SymbolKind};
 
-use crate::utils::file_utils::{detect_language, uri_to_relative_path_string};
+use crate::{api_types::SupportedLanguages, utils::file_utils::{detect_language, uri_to_relative_path_string}};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AstGrepPosition {
@@ -33,22 +34,73 @@ pub async fn find_enclosing_function(
     let file_path = PathBuf::from(&file_path_str);
     let lang = detect_language(&file_path_str)?;
 
-    // Run ast-grep to find all function-like declarations
-    let command_result = Command::new("ast-grep")
+    // Get language-specific pattern
+    let pattern = match lang {
+        SupportedLanguages::TypeScriptJavaScript => {
+            "(function_declaration | method_definition | class_declaration) @cap"
+        }
+        SupportedLanguages::Python => {
+            "(function_definition | class_definition) @cap"
+        }
+        SupportedLanguages::Rust => {
+            "(function_item | impl_item) @cap"
+        }
+        _ => "(function_declaration | method_definition | class_declaration) @cap"
+    };
+
+    debug!(
+        "[find_enclosing_function] Running ast-grep for file: {}, pattern: {}",
+        file_path.display(),
+        pattern
+    );
+
+    // Create a temporary config file with our pattern
+    let temp_dir = tempfile::tempdir()?;
+    let config_path = temp_dir.path().join("config.yml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "rules:\n  - pattern: {}\n    language: {}\nruleDirs: []\n",
+            pattern,
+            lang.to_string().to_lowercase()
+        )
+    )?;
+
+    // Build the command
+    let mut command = Command::new("ast-grep");
+    command
         .arg("scan")
-        .arg("--pattern")
-        .arg("(function_declaration | method_declaration | class_declaration | impl_item) @cap")
+        .arg("--config")
+        .arg(&config_path)
         .arg("--json")
-        .arg(&file_path)
-        .output()
-        .await?;
+        .arg(&file_path);
+
+    debug!(
+        "[find_enclosing_function] Command: {:?}",
+        command
+    );
+
+    let command_result = command.output().await?;
+
+    debug!(
+        "[find_enclosing_function] Command exit status: {}",
+        command_result.status
+    );
 
     if !command_result.status.success() {
         let error = String::from_utf8_lossy(&command_result.stderr);
+        debug!(
+            "[find_enclosing_function] Command stderr: {}",
+            error
+        );
         return Err(format!("ast-grep command failed: {}", error).into());
     }
 
     let output = String::from_utf8(command_result.stdout)?;
+    debug!(
+        "[find_enclosing_function] Command stdout: {}",
+        output
+    );
     let mut matches: Vec<AstGrepMatch> = serde_json::from_str(&output)
         .map_err(|e| format!("Failed to parse JSON: {}\nJSON: {}", e, output))?;
 
