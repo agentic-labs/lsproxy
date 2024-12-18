@@ -1,11 +1,10 @@
 use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
-use log::{error, info};
+use log::{debug, error, info};
 use lsp_types::{
     CallHierarchyItem,    
     Position as LspPosition,
 };
-
 
 use crate::api_types::{
     CallHierarchyItemDetails, CallHierarchyResponse, CallLocation, CallReference, ErrorResponse, FilePosition, GetCallHierarchyRequest, Position
@@ -40,15 +39,36 @@ pub async fn get_call_hierarchy(
     data: Data<AppState>,
     info: Json<GetCallHierarchyRequest>,
 ) -> HttpResponse {
+    // Log initial request with all context
     info!(
-        "Received call hierarchy request for file: {}, line: {}, character: {}",
+        "[CallHierarchy] New request: file={}, position={}:{}, mode={}",
+        info.identifier_position.path,
+        info.identifier_position.position.line,
+        info.identifier_position.position.character,
+        if info.use_manual_hierarchy { "manual" } else { "lsp" }
+    );
+    
+    // Get manager with detailed error handling
+    let manager = match data.manager.lock() {
+        Ok(m) => m,
+        Err(e) => {
+            error!("[CallHierarchy] Failed to acquire manager lock: {}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: "Internal server error: failed to acquire lock".to_string(),
+            });
+        }
+    };
+
+    debug!(
+        "Starting call hierarchy analysis mode={} for file={} at line={} char={}",
+        if info.use_manual_hierarchy { "manual" } else { "lsp" },
         info.identifier_position.path,
         info.identifier_position.position.line,
         info.identifier_position.position.character
     );
-    let manager = data.manager.lock().unwrap();
 
-    // Prepare call hierarchy
+    // Prepare call hierarchy with detailed logging
+    debug!("[CallHierarchy] Preparing call hierarchy analysis");
     let prepare_result = manager
         .prepare_call_hierarchy(
             &info.identifier_position.path,
@@ -59,18 +79,119 @@ pub async fn get_call_hierarchy(
             info.use_manual_hierarchy,
         )
         .await;
-
+    
+    match &prepare_result {
+        Ok(items) => {
+            debug!(
+                "[CallHierarchy] Preparation complete: found {} items",
+                items.len()
+            );
+            if !items.is_empty() {
+                for (i, item) in items.iter().enumerate() {
+                    debug!(
+                        "[CallHierarchy] Item {}/{}: name='{}', kind={:?}, file={}:{}",
+                        i + 1,
+                        items.len(),
+                        item.name,
+                        item.kind,
+                        uri_to_relative_path_string(&item.uri),
+                        item.range.start.line
+                    );
+                }
+            } else {
+                debug!("[CallHierarchy] No items found at the specified position");
+            }
+        }
+        Err(e) => {
+            error!("[CallHierarchy] Preparation failed: {}", e);
+        }
+    };
     match prepare_result {
         Ok(items) if !items.is_empty() => {
             let mut hierarchies = Vec::new();
 
-            for item in items {
-                // Get incoming and outgoing calls for each item
+            for (idx, item) in items.iter().enumerate() {
+                debug!(
+                    "[CallHierarchy] Processing item {}/{}: '{}' at {}:{}",
+                    idx + 1,
+                    items.len(),
+                    item.name,
+                    uri_to_relative_path_string(&item.uri),
+                    item.range.start.line
+                );
+
+                // Get incoming calls with detailed logging
+                debug!(
+                    "[CallHierarchy] Fetching incoming calls for '{}' (mode={})",
+                    item.name,
+                    if info.use_manual_hierarchy { "manual" } else { "lsp" }
+                );
                 let incoming_result = manager.incoming_calls(&item).await;
+                match &incoming_result {
+                    Ok(calls) => {
+                        debug!(
+                            "[CallHierarchy] Found {} incoming calls for '{}'",
+                            calls.len(),
+                            item.name
+                        );
+                        for (i, call) in calls.iter().enumerate() {
+                            debug!(
+                                "[CallHierarchy] Incoming {}/{}: from '{}' at {}:{} ({} call sites)",
+                                i + 1,
+                                calls.len(),
+                                call.from.name,
+                                uri_to_relative_path_string(&call.from.uri),
+                                call.from.range.start.line,
+                                call.from_ranges.len()
+                            );
+                        }
+                    }
+                    Err(e) => error!(
+                        "[CallHierarchy] Failed to get incoming calls for '{}': {}",
+                        item.name, e
+                    ),
+                };
+
+                // Get outgoing calls with detailed logging
+                debug!(
+                    "[CallHierarchy] Fetching outgoing calls for '{}' (mode={})",
+                    item.name,
+                    if info.use_manual_hierarchy { "manual" } else { "lsp" }
+                );
                 let outgoing_result = manager.outgoing_calls(&item, info.use_manual_hierarchy).await;
+                match &outgoing_result {
+                    Ok(calls) => {
+                        debug!(
+                            "[CallHierarchy] Found {} outgoing calls for '{}'",
+                            calls.len(),
+                            item.name
+                        );
+                        for (i, call) in calls.iter().enumerate() {
+                            debug!(
+                                "[CallHierarchy] Outgoing {}/{}: to '{}' at {}:{} ({} call sites)",
+                                i + 1,
+                                calls.len(),
+                                call.to.name,
+                                uri_to_relative_path_string(&call.to.uri),
+                                call.to.range.start.line,
+                                call.from_ranges.len()
+                            );
+                        }
+                    }
+                    Err(e) => error!(
+                        "[CallHierarchy] Failed to get outgoing calls for '{}': {}",
+                        item.name, e
+                    ),
+                };
 
                 match (incoming_result, outgoing_result) {
                     (Ok(incoming), Ok(outgoing)) => {
+                        debug!(
+                            "[CallHierarchy] Successfully processed '{}': {} incoming and {} outgoing calls",
+                            item.name,
+                            incoming.len(),
+                            outgoing.len()
+                        );
                         let hierarchy_item = CallHierarchyItemDetails {
                             item: convert_hierarchy_item(&item),
                             incoming_calls: incoming
@@ -105,7 +226,14 @@ pub async fn get_call_hierarchy(
                         hierarchies.push(hierarchy_item);
                     }
                     (Err(e), _) | (_, Err(e)) => {
-                        error!("Failed to get call hierarchy details for item: {}", e);
+                        error!(
+                            "[CallHierarchy] Failed to process item '{}': {}",
+                            item.name, e
+                        );
+                        debug!(
+                            "[CallHierarchy] Skipping item '{}' and continuing with next item",
+                            item.name
+                        );
                         // Continue with next item instead of failing completely
                         continue;
                     }
@@ -113,33 +241,47 @@ pub async fn get_call_hierarchy(
             }
 
             if hierarchies.is_empty() {
+                error!("[CallHierarchy] Failed to process any items successfully");
                 HttpResponse::BadRequest().json(ErrorResponse {
                     error: "Failed to get call hierarchy details for any items".to_string(),
                 })
             } else {
+                info!(
+                    "[CallHierarchy] Successfully processed {} items with call hierarchy details",
+                    hierarchies.len()
+                );
                 HttpResponse::Ok().json(CallHierarchyResponse { items: hierarchies })
             }
         }
-        Ok(_) => HttpResponse::BadRequest().json(ErrorResponse {
-            error: "No function found at the given position".to_string(),
-        }),
+        Ok(_) => {
+            debug!("[CallHierarchy] No function found at the specified position");
+            HttpResponse::BadRequest().json(ErrorResponse {
+                error: "No function found at the given position".to_string(),
+            })
+        },
         Err(e) => {
-            error!("Failed to prepare call hierarchy: {}", e);
+            error!("[CallHierarchy] Failed to prepare call hierarchy: {}", e);
             match e {
-                LspManagerError::FileNotFound(path) => HttpResponse::BadRequest().json(ErrorResponse {
-                    error: format!("File not found: {}", path),
-                }),
+                LspManagerError::FileNotFound(path) => {
+                    error!("[CallHierarchy] File not found: {}", path);
+                    HttpResponse::BadRequest().json(ErrorResponse {
+                        error: format!("File not found: {}", path),
+                    })
+                },
                 LspManagerError::LspClientNotFound(lang) => {
+                    error!("[CallHierarchy] LSP client not found for language: {:?}", lang);
                     HttpResponse::InternalServerError().json(ErrorResponse {
                         error: format!("LSP client not found for {:?}", lang),
                     })
                 }
                 LspManagerError::InternalError(msg) => {
+                    error!("[CallHierarchy] Internal error occurred: {}", msg);
                     HttpResponse::InternalServerError().json(ErrorResponse {
                         error: format!("Internal error: {}", msg),
                     })
                 }
                 LspManagerError::UnsupportedFileType(path) => {
+                    error!("[CallHierarchy] Unsupported file type: {}", path);
                     HttpResponse::BadRequest().json(ErrorResponse {
                         error: format!("Unsupported file type: {}", path),
                     })

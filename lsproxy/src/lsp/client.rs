@@ -24,6 +24,7 @@ pub struct Object {
     pub node_range: (usize, usize), // start_byte, end_byte
     pub source: Arc<String>,
     pub tree: Arc<Tree>,
+    pub is_reference: bool, // true if this is a reference (e.g. function call), false if it's a definition
 }
 use async_trait::async_trait;
 use log::{debug, error, warn};
@@ -386,41 +387,71 @@ pub trait LspClient: Send {
             let pkg = self.get_narrowest_package(file_path).await?;
             debug!("Got package: {:#?}", pkg);
             
-            // Find the function at the given position
+            // Find the object at the given position (could be reference or definition)
             let obj = self.get_referenced_object(&pkg, file_path, position).await?;
             debug!("Found object at position: {:#?}", obj);
             
             if let Some(obj) = obj {
-                // Verify it's a function
-                if !self.is_function_type(&obj) {
-                    debug!("Object is not a function type, returning empty result");
-                    return Ok(vec![]);
-                }
-                debug!("Object confirmed as function type");
-
-                let range = self.get_object_range(&obj)?;
-                debug!("Function range: {:?}", range);
-                
-                // Create the CallHierarchyItem
-                let filename = std::path::Path::new(file_path)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy();
-                let detail = format!("{} • {}", obj.package_path, filename);
-                
-                let item = CallHierarchyItem {
-                    name: obj.name,
-                    kind: lsp_types::SymbolKind::FUNCTION,
-                    tags: None,
-                    detail: Some(detail),
-                    uri: Url::from_file_path(file_path).map_err(|_| "Invalid file path")?,
-                    range,
-                    selection_range: range,
-                    data: None,
+                // If this is a reference (e.g. function call), look up its definition
+                let definition_obj = if obj.is_reference {
+                    debug!("Found reference, looking up definition");
+                    // Look up the definition
+                    let def_response = self.text_document_definition(file_path, position).await?;
+                    
+                    match def_response {
+                        GotoDefinitionResponse::Array(locations) if !locations.is_empty() => {
+                            let def_location = &locations[0]; // Take first definition
+                            debug!("Found definition at {:?}", def_location);
+                            
+                            // Get package for definition file
+                            let def_pkg = self.get_narrowest_package(def_location.uri.path()).await?;
+                            
+                            // Get object at definition location
+                            self.get_referenced_object(&def_pkg, def_location.uri.path(), def_location.range.start).await?
+                        },
+                        _ => {
+                            debug!("No definition found for reference");
+                            None
+                        }
+                    }
+                } else {
+                    Some(obj)
                 };
-                debug!("Created CallHierarchyItem: {:?}", item);
-                
-                Ok(vec![item])
+
+                // Now verify the definition is a function and use it for the hierarchy item
+                if let Some(def_obj) = definition_obj {
+                    if !self.is_function_type(&def_obj) {
+                        debug!("Definition is not a function type, returning empty result");
+                        return Ok(vec![]);
+                    }
+                    debug!("Definition confirmed as function type");
+
+                    let range = self.get_object_range(&def_obj)?;
+                    debug!("Function range: {:?}", range);
+                    
+                    // Create the CallHierarchyItem using the definition object
+                    let filename = std::path::Path::new(&def_obj.package_path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    let detail = format!("{} • {}", def_obj.package_path, filename);
+                    
+                    let item = CallHierarchyItem {
+                        name: def_obj.name,
+                        kind: lsp_types::SymbolKind::FUNCTION,
+                        tags: None,
+                        detail: Some(detail),
+                        uri: Url::from_file_path(&def_obj.package_path).map_err(|_| "Invalid file path")?,
+                        range,
+                        selection_range: range,
+                        data: None,
+                    };
+                    debug!("Created CallHierarchyItem: {:?}", item);
+                    Ok(vec![item])
+                } else {
+                    debug!("No valid definition found, returning empty result");
+                    Ok(vec![])
+                }
             } else {
                 debug!("No function found at position, returning empty result");
                 Ok(vec![])
@@ -673,6 +704,7 @@ pub trait LspClient: Send {
                 // Verify this is a function call
                 if let Some(parent) = initial_node.parent() {
                     if parent.kind() == "call" {
+                    // if parent.kind() == "function_definition" {
                         debug!("get_referenced_object: Confirmed as function call");
                         Some(Object {
                             name,
@@ -681,6 +713,7 @@ pub trait LspClient: Send {
                             node_range: (initial_node.start_byte(), initial_node.end_byte()),
                             source: source.clone(),
                             tree: tree.clone(),
+                            is_reference: true,
                         })
                     } else {
                         debug!("get_referenced_object: Not a function call, parent is: {}", parent.kind());
@@ -708,6 +741,7 @@ pub trait LspClient: Send {
                             node_range: (initial_node.start_byte(), initial_node.end_byte()),
                             source: source.clone(),
                             tree: tree.clone(),
+                            is_reference: false,
                         }));
                     }
                 }
@@ -720,7 +754,7 @@ pub trait LspClient: Send {
             }
         };
 
-        debug!("get_referenced_object: Returning result: {:?}", obj.is_some());
+        debug!("get_referenced_object: Returning result: {:?}", obj);
         Ok(obj)
     }
 
