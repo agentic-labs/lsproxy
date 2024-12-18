@@ -1,7 +1,7 @@
 use crate::lsp::json_rpc::JsonRpc;
 use crate::lsp::process::Process;
 use crate::lsp::{ExpectedMessageKey, JsonRpcHandler, ProcessHandler};
-use tree_sitter::{Parser, Query, QueryCursor, Tree};
+use tree_sitter::{Parser, Query, QueryCursor, Tree, Point};
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use lsp_types::{Location, Url, Position, Range, CallHierarchyItem, CallHierarchyIncomingCall, CallHierarchyOutgoingCall};
@@ -380,32 +380,49 @@ pub trait LspClient: Send {
                 Ok(items)
             }
         } else {
-            // Manual implementation based on gopls
+            debug!("Manually preparing call hierarchy for file: {}, position: {:?}", file_path, position);
+            
+            // Get package info for the file
             let pkg = self.get_narrowest_package(file_path).await?;
+            debug!("Got package: {:#?}", pkg);
+            
+            // Find the function at the given position
             let obj = self.get_referenced_object(&pkg, file_path, position).await?;
+            debug!("Found object at position: {:#?}", obj);
             
             if let Some(obj) = obj {
+                // Verify it's a function
                 if !self.is_function_type(&obj) {
+                    debug!("Object is not a function type, returning empty result");
                     return Ok(vec![]);
                 }
+                debug!("Object confirmed as function type");
 
-                let name = obj.name.clone();
-                let uri = Url::from_file_path(file_path).map_err(|_| "Invalid file path")?;
                 let range = self.get_object_range(&obj)?;
+                debug!("Function range: {:?}", range);
+                
+                // Create the CallHierarchyItem
+                let filename = std::path::Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let detail = format!("{} • {}", obj.package_path, filename);
                 
                 let item = CallHierarchyItem {
-                    name,
+                    name: obj.name,
                     kind: lsp_types::SymbolKind::FUNCTION,
                     tags: None,
-                    detail: Some(format!("{} • {}", obj.package_path, std::path::Path::new(file_path).file_name().unwrap().to_string_lossy())),
-                    uri: uri.clone(),
+                    detail: Some(detail),
+                    uri: Url::from_file_path(file_path).map_err(|_| "Invalid file path")?,
                     range,
                     selection_range: range,
                     data: None,
                 };
+                debug!("Created CallHierarchyItem: {:?}", item);
                 
                 Ok(vec![item])
             } else {
+                debug!("No function found at position, returning empty result");
                 Ok(vec![])
             }
         }
@@ -587,85 +604,124 @@ pub trait LspClient: Send {
 
     async fn get_referenced_object(&mut self, pkg: &Package, file_path: &str, pos: Position) 
         -> Result<Option<Object>, Box<dyn Error + Send + Sync>> {
+        debug!("get_referenced_object: Starting for file {} at position {:?}", file_path, pos);
+        debug!("get_referenced_object: Using package path: {}", pkg.path);
+
+        // Read source file
         let source = self.get_workspace_documents()
             .read_text_document(&PathBuf::from(file_path), None)
             .await?;
+        let source = Arc::new(source);
+        debug!("get_referenced_object: Read source file, length: {}", source.len());
 
+        // Initialize parser with language
         let mut parser = Parser::new();
-        match detect_language_string(file_path)?.as_str() {
+        let lang_str = detect_language_string(file_path)?;
+        debug!("get_referenced_object: Detected language: {}", lang_str);
+        
+        match lang_str.as_str() {
             "python" => {
-                let language = tree_sitter_python::language();
-                parser.set_language(language)?;
+                debug!("get_referenced_object: Configuring Python parser");
+                parser.set_language(tree_sitter_python::language())?;
             }
             "typescript" | "javascript" => {
-                let language = tree_sitter_typescript::language_typescript();  // or language_tsx() for TSX files
-                parser.set_language(language)?;
+                debug!("get_referenced_object: Configuring TypeScript parser");
+                parser.set_language(tree_sitter_typescript::language_typescript())?;
             }
-            _ => return Err("Unsupported language".into()),
+            _ => {
+                debug!("get_referenced_object: Unsupported language: {}", lang_str);
+                return Err("Unsupported language".into())
+            },
         };
 
-        let tree = Arc::new(parser.parse(&source, None)
+        // Parse the file
+        let tree = Arc::new(parser.parse(&*source, None)
             .ok_or("Failed to parse source")?);
+        debug!("get_referenced_object: Successfully parsed source tree");
 
-        // Convert LSP position to byte offset
-        let mut byte_offset = 0;
-        let mut line = 0;
-        let mut col = 0;
-        for (i, c) in source.chars().enumerate() {
-            if line == pos.line && col == pos.character {
-                byte_offset = i;
-                break;
-            }
-            if c == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
-            byte_offset = i;
-        }
+        // Convert LSP position to tree-sitter Point
+        let point = Point::new(pos.line as usize, pos.character as usize);
+        debug!("get_referenced_object: Converted LSP position to tree-sitter point: {:?}", point);
 
-        // Find the smallest node that contains this position
-        let node = tree.root_node()
-            .descendant_for_byte_range(byte_offset, byte_offset)
+        // Debug: Print the source line we're looking at
+        let line = source.lines().nth(point.row).unwrap_or("");
+        debug!("get_referenced_object: Looking at line {}: {:?}", point.row, line);
+        debug!("get_referenced_object: Target column: {}", point.column);
+
+        // Find the most specific named node at the position
+        let initial_node = tree.root_node()
+            .named_descendant_for_point_range(point, point)
             .ok_or("No node found at position")?;
+        
+        debug!("get_referenced_object: Found node: kind={}, text={:?}", 
+               initial_node.kind(),
+               source[initial_node.byte_range()].to_string());
 
-        // Find the enclosing function/method node
-        let mut current = Some(node);
-        while let Some(n) = current {
-            // Use the query to find function definitions
-            let query_str = self.get_function_definition_query(file_path)?;
-            let query = Query::new(tree.language(), query_str)?;
-            let mut cursor = QueryCursor::new();
-            let matches = cursor.matches(&query, n, source.as_bytes());
+        // Get the appropriate query based on language
+        let query_str = self.get_function_definition_query(file_path)?;
+        let query = Query::new(parser.language().unwrap(), query_str)?;
+        let mut cursor = QueryCursor::new();
+        debug!("get_referenced_object: Prepared query for finding definitions");
 
-            for match_ in matches {
-                for capture in match_.captures {
-                    if query.capture_names()[capture.index as usize] == "func_decl" {
-                        let func_node = capture.node;
-                        let range = self.tree_sitter_to_lsp_range(&func_node, &source)?;
-                        
-                        // Find the function name from the captures
-                        let name = match_.captures.iter()
-                            .find(|c| query.capture_names()[c.index as usize] == "func_name")
-                            .map(|c| source[c.node.byte_range()].to_string())
-                            .unwrap_or_else(|| "anonymous".to_string());
-
+        // Create an Object for the node we found
+        let obj = match initial_node.kind() {
+            // If we're on an identifier that's being called (function reference)
+            "identifier" | "property_identifier" => {
+                let name = source[initial_node.byte_range()].to_string();
+                debug!("get_referenced_object: Found function reference: {}", name);
+                
+                // Verify this is a function call
+                if let Some(parent) = initial_node.parent() {
+                    if parent.kind() == "call" {
+                        debug!("get_referenced_object: Confirmed as function call");
+                        Some(Object {
+                            name,
+                            package_path: pkg.path.clone(),
+                            range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
+                            node_range: (initial_node.start_byte(), initial_node.end_byte()),
+                            source: source.clone(),
+                            tree: tree.clone(),
+                        })
+                    } else {
+                        debug!("get_referenced_object: Not a function call, parent is: {}", parent.kind());
+                        None
+                    }
+                } else {
+                    debug!("get_referenced_object: No parent node found");
+                    None
+                }
+            },
+            // If we're directly on a definition node
+            "function_definition" | "method_definition" |
+            "function_declaration" | "class_definition" |
+            "class_declaration" => {
+                debug!("get_referenced_object: Directly on a definition node: {}", initial_node.kind());
+                // Get the name from the definition
+                for capture in cursor.matches(&query, initial_node, source.as_bytes()).flat_map(|m| m.captures) {
+                    if query.capture_names()[capture.index as usize].ends_with("_name") {
+                        let name = source[capture.node.byte_range()].to_string();
+                        debug!("get_referenced_object: Found definition name: {}", name);
                         return Ok(Some(Object {
                             name,
                             package_path: pkg.path.clone(),
-                            range,
-                            node_range: (func_node.start_byte(), func_node.end_byte()),
-                            source: Arc::new(source),
-                            tree,
+                            range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
+                            node_range: (initial_node.start_byte(), initial_node.end_byte()),
+                            source: source.clone(),
+                            tree: tree.clone(),
                         }));
                     }
                 }
+                debug!("get_referenced_object: No name found in definition node");
+                None
+            },
+            _ => {
+                debug!("get_referenced_object: Unhandled node kind: {}", initial_node.kind());
+                None
             }
-            current = n.parent();
-        }
+        };
 
-        Ok(None)
+        debug!("get_referenced_object: Returning result: {:?}", obj.is_some());
+        Ok(obj)
     }
 
     fn is_function_type(&self, obj: &Object) -> bool {
@@ -676,6 +732,7 @@ pub trait LspClient: Send {
             .unwrap_or(tree.root_node());
 
         // Check node type for Python and TypeScript function definitions
+        debug!("checking node kind for node: {:?}",node);
         matches!(node.kind(), 
             "function_definition" |     // Python function
             "method_definition" |       // Python method
