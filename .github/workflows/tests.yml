@@ -4,10 +4,12 @@ on:
     branches: [main]
     paths:
       - 'lsproxy/**'
+      - '.github/workflows/**'
   pull_request:
     branches: [main, dev]
     paths:
       - 'lsproxy/**'
+      - '.github/workflows/**'
 
 jobs:
   build-and-test:
