@@ -13,13 +13,13 @@ docker run --rm \
     -v "$(pwd)/lsproxy":/usr/src/app \
     -v "$(pwd)":/mnt/lsproxy_root \
     --name coverage-container \
-    lsproxy-dev sh -c "cd /usr/src/app && RUST_BACKTRACE=1 cargo llvm-cov --lib --html --output-dir=/usr/src/app/coverage"
+    lsproxy-dev sh -c "cd /usr/src/app && RUST_BACKTRACE=1 cargo llvm-cov --lib --html --output-dir=/usr/src/app/coverage/html"
 
 # Check if coverage report was generated
-if [ ! -f "$(pwd)/lsproxy/coverage/index.html" ]; then
+if [ ! -f "$(pwd)/lsproxy/coverage/html/index.html" ]; then
     echo "Coverage report generation failed."
     exit 1
 fi
 
 # Copy coverage report from container
-docker cp coverage-container:/usr/src/app/coverage/. "$(pwd)/lsproxy/coverage/"
+docker cp coverage-container:/usr/src/app/coverage/html/. "$(pwd)/lsproxy/coverage/html/"
