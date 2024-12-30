@@ -3,7 +3,7 @@ use crate::lsp::process::Process;
 use crate::lsp::{ExpectedMessageKey, JsonRpcHandler, ProcessHandler};
 use crate::utils::file_utils::{detect_language_string, search_directories};
 use lsp_types::{
-    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, Location, Position,
+    CallHierarchyItem, Location, Position,
     Range, Url,
 };
 use std::path::{Path, PathBuf};
@@ -33,7 +33,7 @@ pub struct Object {
 use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
-    CallHierarchyIncomingCallsParams, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyPrepareParams,
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult,
     PartialResultParams, PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams,
@@ -509,152 +509,6 @@ pub trait LspClient: Send {
         }
     }
 
-    #[allow(unused)]
-    async fn incoming_calls(
-        &mut self,
-        item: &CallHierarchyItem,
-        use_manual_hierarchy: bool,
-    ) -> Result<Vec<CallHierarchyIncomingCall>, Box<dyn Error + Send + Sync>> {
-        if !use_manual_hierarchy {
-            let params = CallHierarchyIncomingCallsParams {
-                item: item.clone(),
-                work_done_progress_params: WorkDoneProgressParams::default(),
-                partial_result_params: PartialResultParams::default(),
-            };
-
-            let result = self
-                .send_request(
-                    "callHierarchy/incomingCalls",
-                    Some(serde_json::to_value(params)?),
-                )
-                .await?;
-
-            if result.is_null() {
-                Ok(vec![])
-            } else {
-                let calls: Vec<CallHierarchyIncomingCall> = serde_json::from_value(result)?;
-                debug!("Received incoming calls response");
-                Ok(calls)
-            }
-        } else {
-            // Manual implementation based on gopls
-            let refs = self.get_references(&item.uri, item.range.start).await?;
-            let mut incoming_calls = std::collections::HashMap::new();
-
-            for ref_loc in refs {
-                if let Ok(call_item) = self.get_enclosing_function(&ref_loc).await {
-                    // Create a hashable key from Location components
-                    let loc_key = (
-                        call_item.uri.to_string(),
-                        (call_item.range.start.line, call_item.range.start.character),
-                        (call_item.range.end.line, call_item.range.end.character),
-                    );
-
-                    let entry = incoming_calls.entry(loc_key).or_insert_with(|| {
-                        CallHierarchyIncomingCall {
-                            from: call_item,
-                            from_ranges: vec![],
-                        }
-                    });
-                    entry.from_ranges.push(ref_loc.range);
-                }
-            }
-
-            Ok(incoming_calls.into_values().collect())
-        }
-    }
-
-    async fn outgoing_calls(
-        &mut self,
-        item: &CallHierarchyItem,
-        use_manual_hierarchy: bool,
-    ) -> Result<Vec<CallHierarchyOutgoingCall>, Box<dyn Error + Send + Sync>> {
-        if !use_manual_hierarchy {
-            let params = CallHierarchyOutgoingCallsParams {
-                item: item.clone(),
-                work_done_progress_params: WorkDoneProgressParams::default(),
-                partial_result_params: PartialResultParams::default(),
-            };
-
-            let result = self
-                .send_request(
-                    "callHierarchy/outgoingCalls",
-                    Some(serde_json::to_value(params)?),
-                )
-                .await?;
-
-            if result.is_null() {
-                Ok(vec![])
-            } else {
-                let calls: Vec<CallHierarchyOutgoingCall> = serde_json::from_value(result)?;
-                debug!("Received outgoing calls response");
-                Ok(calls)
-            }
-        } else {
-            // Manual implementation based on gopls
-            let decl_pkg = self.get_narrowest_package(item.uri.path()).await?;
-            let decl_obj = self
-                .get_referenced_object(&decl_pkg, item.uri.path(), item.range.start)
-                .await?;
-
-            if let Some(decl_obj) = decl_obj {
-                let mut outgoing_calls = std::collections::HashMap::new();
-                let call_ranges = self.find_function_calls(&decl_obj).await?;
-
-                for call_range in call_ranges {
-                    let called_obj = self
-                        .get_referenced_object(&decl_pkg, item.uri.path(), call_range.start)
-                        .await?;
-
-                    if let Some(obj) = called_obj {
-                        if self.is_function_type(&obj) {
-                            let range = self.get_object_range(&obj)?;
-                            let uri = Url::from_file_path(item.uri.path())
-                                .map_err(|_| "Invalid file path")?;
-
-                            let call_item = CallHierarchyItem {
-                                name: obj.name.clone(),
-                                kind: lsp_types::SymbolKind::FUNCTION,
-                                tags: None,
-                                detail: Some(format!(
-                                    "{} • {}",
-                                    obj.package_path,
-                                    std::path::Path::new(item.uri.path())
-                                        .file_name()
-                                        .unwrap()
-                                        .to_string_lossy()
-                                )),
-                                uri: uri.clone(),
-                                range,
-                                selection_range: range,
-                                data: None,
-                            };
-
-                            // Create a hashable key from object name and location
-                            let call_key = (
-                                obj.name.clone(),
-                                uri.to_string(),
-                                (range.start.line, range.start.character),
-                                (range.end.line, range.end.character),
-                            );
-                            let entry = outgoing_calls.entry(call_key).or_insert_with(|| {
-                                CallHierarchyOutgoingCall {
-                                    to: call_item,
-                                    from_ranges: vec![],
-                                }
-                            });
-                            entry.from_ranges.push(call_range);
-                        }
-                    }
-                }
-
-                Ok(outgoing_calls.into_values().collect())
-            } else {
-                Ok(vec![])
-            }
-        }
-    }
-
     fn get_process(&mut self) -> &mut ProcessHandler;
 
     fn get_json_rpc(&mut self) -> &mut JsonRpcHandler;
@@ -943,7 +797,7 @@ pub trait LspClient: Send {
 
         // Convert byte offsets to UTF-16 code unit offsets for LSP
         let byte_to_utf16_col = |line_start: usize, byte_col: usize| {
-            let line_str = if let Some((start, end)) = source[line_start..].split_once('\n') {
+            let line_str = if let Some((start, _end)) = source[line_start..].split_once('\n') {
                 start
             } else {
                 &source[line_start..]
@@ -986,241 +840,7 @@ pub trait LspClient: Send {
             },
         })
     }
-
-    async fn get_references(
-        &mut self,
-        uri: &Url,
-        pos: Position,
-    ) -> Result<Vec<Location>, Box<dyn Error + Send + Sync>> {
-        // First get the object at the position to find its name
-        let pkg = self.get_narrowest_package(uri.path()).await?;
-        let obj = self.get_referenced_object(&pkg, uri.path(), pos).await?;
-
-        if let Some(obj) = obj {
-            let mut references = Vec::new();
-            let workspace_docs = self.get_workspace_documents();
-
-            // Search for references in all workspace files
-            for file_path in workspace_docs.list_files().await {
-                let source = workspace_docs
-                    .read_text_document(&PathBuf::from(&file_path), None)
-                    .await?;
-
-                // Parse the file with tree-sitter
-                let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
-                let mut parser = match detect_language_string(file_path_str)?.as_str() {
-                    "python" => {
-                        let mut parser = Parser::new();
-                        parser.set_language(tree_sitter_python::language())?;
-                        parser
-                    }
-                    "typescript" | "javascript" => {
-                        let mut parser = Parser::new();
-                        parser.set_language(tree_sitter_typescript::language_typescript())?;
-                        parser
-                    }
-                    _ => continue,
-                };
-
-                let tree = parser.parse(&source, None).ok_or("Failed to parse file")?;
-
-                // Create a query to find references to the function
-                let query_text = match detect_language_string(file_path_str)?.as_str() {
-                    "python" => format!(
-                        "(call function: (identifier) @ref (#eq? @ref \"{}\"))",
-                        obj.name
-                    ),
-                    "typescript" | "javascript" => format!(
-                        "(call_expression function: (identifier) @ref (#eq? @ref \"{}\"))",
-                        obj.name
-                    ),
-                    _ => continue,
-                };
-
-                let query = Query::new(
-                    parser.language().ok_or("Parser language not set")?,
-                    &query_text,
-                )?;
-                let mut cursor = QueryCursor::new();
-
-                // Find all matches in the file
-                for m in cursor.matches(&query, tree.root_node(), source.as_bytes()) {
-                    for capture in m.captures {
-                        let node = capture.node;
-                        let start_pos = node.start_position();
-                        let end_pos = node.end_position();
-
-                        references.push(Location {
-                            uri: Url::from_file_path(&file_path)
-                                .map_err(|_| "Invalid file path")?,
-                            range: Range {
-                                start: Position {
-                                    line: start_pos.row as u32,
-                                    character: start_pos.column as u32,
-                                },
-                                end: Position {
-                                    line: end_pos.row as u32,
-                                    character: end_pos.column as u32,
-                                },
-                            },
-                        });
-                    }
-                }
-            }
-
-            Ok(references)
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
-    async fn get_enclosing_function(
-        &mut self,
-        loc: &Location,
-    ) -> Result<CallHierarchyItem, Box<dyn Error + Send + Sync>> {
-        let source = self
-            .get_workspace_documents()
-            .read_text_document(&PathBuf::from(loc.uri.path()), None)
-            .await?;
-
-        let mut parser = Parser::new();
-        let language = match detect_language_string(loc.uri.path())?.as_str() {
-            "python" => tree_sitter_python::language(),
-            "typescript" | "javascript" => tree_sitter_typescript::language_typescript(),
-            _ => return Err("Unsupported language".into()),
-        };
-        parser.set_language(language)?;
-
-        let tree = parser
-            .parse(&source, None)
-            .ok_or("Failed to parse source")?;
-
-        // Query to find the enclosing function
-        let query_str = match detect_language_string(loc.uri.path())?.as_str() {
-            "python" => {
-                r#"
-                (function_definition
-                  name: (identifier) @func_name
-                ) @func_decl
-
-                (class_definition
-                  name: (identifier) @class_name
-                  body: (block 
-                    (function_definition
-                      name: (identifier) @func_name) @func_decl)
-                )
-            "#
-            }
-            "typescript" | "javascript" => {
-                r#"
-                (function_declaration
-                  name: (identifier) @func_name
-                ) @func_decl
-
-                (method_definition
-                  name: (property_identifier) @func_name
-                ) @func_decl
-
-                (class_declaration
-                  name: (type_identifier) @class_name
-                  body: (class_body
-                    (method_definition
-                      name: (property_identifier) @func_name) @func_decl)
-                )
-
-                (arrow_function
-                  name: (identifier) @func_name
-                ) @func_decl
-            "#
-            }
-            _ => return Err("Unsupported language".into()),
-        };
-
-        let query = Query::new(language, query_str)?;
-        let mut cursor = QueryCursor::new();
-        let matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
-
-        // Find the function that contains our location
-        for match_ in matches {
-            for capture in match_.captures {
-                if query.capture_names()[capture.index as usize] == "func_decl" {
-                    let func_node = capture.node;
-                    let func_start = self.tree_sitter_to_lsp_pos(&func_node, &source)?;
-                    let func_end = self.tree_sitter_to_lsp_pos_end(&func_node, &source)?;
-                    let func_range = lsp_types::Range::new(func_start, func_end);
-
-                    // Check if this function contains our location
-                    if self.range_contains(&func_range, &loc.range) {
-                        // Find the function name
-                        let name = match_
-                            .captures
-                            .iter()
-                            .find(|c| query.capture_names()[c.index as usize] == "func_name")
-                            .map(|c| {
-                                let node = c.node;
-                                source[node.byte_range()].to_string()
-                            })
-                            .unwrap_or_else(|| "anonymous".to_string());
-
-                        return Ok(CallHierarchyItem {
-                            name,
-                            kind: lsp_types::SymbolKind::FUNCTION,
-                            tags: None,
-                            detail: Some(format!(
-                                "{} • {}",
-                                std::path::Path::new(loc.uri.path())
-                                    .parent()
-                                    .unwrap()
-                                    .to_string_lossy(),
-                                std::path::Path::new(loc.uri.path())
-                                    .file_name()
-                                    .unwrap()
-                                    .to_string_lossy()
-                            )),
-                            uri: loc.uri.clone(),
-                            range: func_range,
-                            selection_range: func_range,
-                            data: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        // If no enclosing function found, use the file scope
-        Ok(CallHierarchyItem {
-            name: "file_scope".to_string(),
-            kind: lsp_types::SymbolKind::FILE,
-            tags: None,
-            detail: Some(format!(
-                "{}",
-                std::path::Path::new(loc.uri.path())
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-            )),
-            uri: loc.uri.clone(),
-            range: lsp_types::Range::new(Position::new(0, 0), Position::new(u32::MAX, u32::MAX)),
-            selection_range: loc.range,
-            data: None,
-        })
-    }
-
-    fn range_contains(&self, outer: &lsp_types::Range, inner: &lsp_types::Range) -> bool {
-        if outer.start.line > inner.start.line {
-            return false;
-        }
-        if outer.end.line < inner.end.line {
-            return false;
-        }
-        if outer.start.line == inner.start.line && outer.start.character > inner.start.character {
-            return false;
-        }
-        if outer.end.line == inner.end.line && outer.end.character < inner.end.character {
-            return false;
-        }
-        true
-    }
+    
 
     async fn find_function_calls(
         &mut self,
@@ -1261,7 +881,6 @@ pub trait LspClient: Send {
         let start_byte = node.start_byte();
         let mut line = 0;
         let mut col = 0;
-        let mut byte = 0;
 
         for (i, c) in source.chars().enumerate() {
             if i == start_byte {
@@ -1273,7 +892,6 @@ pub trait LspClient: Send {
             } else {
                 col += 1;
             }
-            byte += c.len_utf8();
         }
 
         Ok(Position::new(line as u32, col as u32))
@@ -1287,7 +905,6 @@ pub trait LspClient: Send {
         let end_byte = node.end_byte();
         let mut line = 0;
         let mut col = 0;
-        let mut byte = 0;
 
         for (i, c) in source.chars().enumerate() {
             if i == end_byte {
@@ -1299,7 +916,6 @@ pub trait LspClient: Send {
             } else {
                 col += 1;
             }
-            byte += c.len_utf8();
         }
 
         Ok(Position::new(line as u32, col as u32))

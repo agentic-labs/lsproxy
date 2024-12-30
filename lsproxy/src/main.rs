@@ -1,6 +1,5 @@
 use clap::Parser;
 use env_logger::Env;
-use log::info;
 use lsproxy::{initialize_app_state_with_mount_dir, run_server_with_host, write_openapi_to_file};
 use std::path::PathBuf;
 
