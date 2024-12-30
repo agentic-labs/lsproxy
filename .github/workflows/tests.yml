@@ -81,7 +81,7 @@ jobs:
             -v "${PWD}/lsproxy:/usr/src/app" \
             -v "${PWD}:/mnt/lsproxy_root" \
             --name coverage-container \
-            lsproxy-dev sh -c "cd /usr/src/app && RUST_BACKTRACE=1 cargo llvm-cov --lib --html --output-dir=/usr/src/app/coverage"
+            lsproxy-dev sh -c "cd /usr/src/app && rustup component add llvm-tools-preview && cargo install cargo-llvm-cov && RUST_BACKTRACE=1 cargo llvm-cov --lib --html --output-dir=/usr/src/app/coverage"
           
           # Copy coverage report from container
           docker cp coverage-container:/usr/src/app/coverage/. "${PWD}/lsproxy/coverage/"
