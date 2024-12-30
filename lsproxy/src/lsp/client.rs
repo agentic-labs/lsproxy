@@ -754,17 +754,14 @@ pub trait LspClient: Send {
             .descendant_for_byte_range(obj.node_range.0, obj.node_range.1)
             .unwrap_or(tree.root_node());
 
-        // Check node type for Python and TypeScript function definitions
+        // Get language handler and check node type
         debug!("checking node kind for node: {:?}", node);
-        matches!(
-            node.kind(),
-            "function_definition" |     // Python function
-            "method_definition" |       // Python method
-            "function_declaration" |    // TypeScript function
-            "method_declaration" |      // TypeScript method
-            "arrow_function" |          // TypeScript arrow function
-            "function" // TypeScript function expression
-        )
+        if let Ok(lang) = detect_language_string(&obj.file_path) {
+            if let Some(handler) = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang) {
+                return handler.is_function_type(node.kind());
+            }
+        }
+        false
     }
 
     fn get_object_range(
@@ -936,135 +933,20 @@ pub trait LspClient: Send {
         file_path: &str,
     ) -> Result<&'static str, Box<dyn Error + Send + Sync>> {
         let path = PathBuf::from(file_path);
-        match detect_language_string(path.to_str().ok_or("Invalid path")?)?.as_str() {
-            "python" => Ok(self.get_python_function_call_query()),
-            "typescript" | "javascript" => Ok(self.get_typescript_function_call_query()),
-            _ => Err("Unsupported language".into()),
-        }
-    }
-
-    fn get_python_function_call_query(&self) -> &'static str {
-        r#"
-            ; Any function or method call
-            (call) @call
-        "#
-    }
-
-    fn get_typescript_function_call_query(&self) -> &'static str {
-        r#"
-            ; Regular function calls
-            (call_expression
-              function: (identifier) @func_name) @call
-
-            ; Method calls
-            (call_expression
-              function: (member_expression
-                property: (property_identifier) @func_name)) @call
-
-            ; Constructor calls
-            (new_expression
-              constructor: (identifier) @class_name) @call
-
-            ; Static method calls
-            (call_expression
-              function: (member_expression
-                object: (identifier) @class_name
-                property: (property_identifier) @func_name)) @call
-
-            ; Immediately invoked function expressions (IIFE)
-            ((call_expression
-              function: (parenthesized_expression
-                (arrow_function))) @call)
-
-            ; Function calls with this
-            (call_expression
-              function: (member_expression
-                object: (this)
-                property: (property_identifier) @func_name)) @call
-        "#
+        let lang = detect_language_string(path.to_str().ok_or("Invalid path")?)?;
+        let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang)
+            .ok_or_else(|| format!("Unsupported language: {}", lang))?;
+        Ok(handler.get_function_call_query())
     }
 
     fn get_function_definition_query(
         &self,
         file_path: &str,
     ) -> Result<&'static str, Box<dyn Error + Send + Sync>> {
-        match detect_language_string(file_path)?.as_str() {
-            "python" => Ok(self.get_python_function_definition_query()),
-            "typescript" | "javascript" => Ok(self.get_typescript_function_definition_query()),
-            _ => Err("Unsupported language".into()),
-        }
-    }
-
-    fn get_python_function_definition_query(&self) -> &'static str {
-        r#"
-            ; Regular functions
-            (function_definition
-              name: (identifier) @func_name
-            ) @func_decl
-
-            ; Class methods
-            (class_definition
-              name: (identifier) @class_name
-              body: (block 
-                (function_definition
-                  name: (identifier) @func_name) @func_decl)
-            )
-
-            ; Async functions
-            (function_definition
-              "async"
-              name: (identifier) @func_name
-            ) @func_decl
-
-            ; Lambda functions
-            (lambda
-              parameters: (lambda_parameters)?) @func_decl
-
-            ; Decorated functions
-            (decorated_definition
-              definition: (function_definition
-                name: (identifier) @func_name)) @func_decl
-        "#
-    }
-
-    fn get_typescript_function_definition_query(&self) -> &'static str {
-        r#"
-        ; Regular functions
-        (function_declaration
-          name: (identifier) @func_name
-        ) @func_decl
-
-        ; Class methods (including constructors and shorthand methods)
-        (method_definition
-          name: (_) @func_name
-        ) @func_decl
-
-        ; Class declarations with methods
-        (class_declaration
-          name: (type_identifier) @class_name
-          body: (class_body
-            (method_definition
-              name: (_) @func_name) @func_decl)
-        )
-
-        ; Arrow functions with names (variable declarations)
-        (variable_declaration
-          (variable_declarator
-            name: (identifier) @func_name
-            value: (arrow_function))) @func_decl
-
-        ; Async functions
-        (function_declaration
-          "async"
-          name: (identifier) @func_name
-        ) @func_decl
-
-        ; Async methods
-        (method_definition
-          "async"
-          name: (_) @func_name
-        ) @func_decl
-    "#
+        let lang = detect_language_string(file_path)?;
+        let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang)
+            .ok_or_else(|| format!("Unsupported language: {}", lang))?;
+        Ok(handler.get_function_definition_query())
     }
     /// Sets up the workspace for the language server.
     ///
