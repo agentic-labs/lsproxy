@@ -202,7 +202,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FileRange"
+                "$ref": "#/components/schemas/ReadSourceCodeRequest"
               }
             }
           },
@@ -443,14 +443,41 @@
           }
         }
       },
+      "ReadSourceCodeRequest": {
+        "type": "object",
+        "description": "Request to read source code from a file in the workspace.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The path to the file (required).",
+            "example": "src/main.py"
+          },
+          "range": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FileRange",
+                "description": "The range of lines and characters to read (optional)."
+              }
+            ]
+          }
+        }
+      },
       "ReadSourceCodeResponse": {
         "type": "object",
+        "description": "Response to a read source code request.",
         "required": [
           "source_code"
         ],
         "properties": {
           "source_code": {
-            "type": "string"
+            "type": "string",
+            "description": "The source code that was read."
           }
         }
       },

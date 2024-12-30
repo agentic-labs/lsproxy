@@ -85,6 +85,47 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
     expected_files.sort();
     assert_eq!(workspace_files, expected_files, "File lists do not match");
 
+    // Test read_source_code endpoint - full file
+    let response = client
+        .post(&format!("{}/v1/workspace/read-source-code", base_url))
+        .json(&lsproxy::api_types::ReadSourceCodeRequest {
+            path: "main.py".to_string(),
+            range: None,
+        })
+        .send()
+        .expect("Failed to send request");
+    assert_eq!(response.status(), 200);
+    let read_response: lsproxy::api_types::ReadSourceCodeResponse = response.json().expect("Failed to parse JSON");
+    assert!(!read_response.source_code.is_empty(), "Source code should not be empty");
+
+    // Test read_source_code endpoint - with range
+    let response = client
+        .post(&format!("{}/v1/workspace/read-source-code", base_url))
+        .json(&lsproxy::api_types::ReadSourceCodeRequest {
+            path: "main.py".to_string(),
+            range: Some(FileRange {
+                path: "main.py".to_string(),
+                start: Position { line: 5, character: 0 },
+                end: Position { line: 5, character: 20 },
+            }),
+        })
+        .send()
+        .expect("Failed to send request");
+    assert_eq!(response.status(), 200);
+    let read_response: lsproxy::api_types::ReadSourceCodeResponse = response.json().expect("Failed to parse JSON");
+    assert_eq!(read_response.source_code, "graph = Graph(edges)", "Range read returned unexpected content");
+
+    // Test read_source_code endpoint - invalid path
+    let response = client
+        .post(&format!("{}/v1/workspace/read-source-code", base_url))
+        .json(&lsproxy::api_types::ReadSourceCodeRequest {
+            path: "nonexistent.py".to_string(),
+            range: None,
+        })
+        .send()
+        .expect("Failed to send request");
+    assert_eq!(response.status(), 400, "Should return 400 for nonexistent file");
+
     // Test file_symbols endpoint
     let response = client
         .get(&format!("{}/v1/symbol/definitions-in-file", base_url))
