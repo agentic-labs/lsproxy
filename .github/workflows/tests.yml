@@ -46,7 +46,6 @@ jobs:
           docker run -v "${PWD}/lsproxy:/usr/src/app" -v "${PWD}:/mnt/lsproxy_root" lsproxy-dev cargo test --lib --bins --tests
 
   coverage:
-    needs: build-and-test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
