@@ -26,6 +26,7 @@ static HANDLERS: Lazy<HashMap<&str, Box<dyn HandlerFactory>>> = Lazy::new(|| {
     m.insert("python", Box::new(PythonHandlerFactory) as Box<dyn HandlerFactory>);
     m.insert("typescript", Box::new(TypeScriptHandlerFactory) as Box<dyn HandlerFactory>);
     m.insert("javascript", Box::new(TypeScriptHandlerFactory) as Box<dyn HandlerFactory>);
+    m.insert("typescriptjavascript", Box::new(TypeScriptHandlerFactory) as Box<dyn HandlerFactory>);
     m
 });
 

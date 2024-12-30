@@ -34,19 +34,11 @@ pub async fn find_enclosing_function(
     let file_path = PathBuf::from(&file_path_str);
     let lang = detect_language(&file_path_str)?;
 
-    // Get language-specific pattern
-    let pattern = match lang {
-        SupportedLanguages::TypeScriptJavaScript => {
-            "(function_declaration | method_definition | class_declaration) @cap"
-        }
-        SupportedLanguages::Python => {
-            "(function_definition | class_definition) @cap"
-        }
-        SupportedLanguages::Rust => {
-            "(function_item | impl_item) @cap"
-        }
-        _ => "(function_declaration | method_definition | class_declaration) @cap"
-    };
+    // Get language-specific pattern from handler
+    let lang_str = lang.to_string().to_lowercase();
+    let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
+        .ok_or_else(|| format!("No call hierarchy handler for language: {}", lang_str))?;
+    let pattern = handler.get_enclosing_function_pattern();
 
     debug!(
         "[find_enclosing_function] Running ast-grep for file: {}, pattern: {}",
@@ -123,13 +115,8 @@ pub async fn find_enclosing_function(
     });
 
     if let Some(node) = enclosing {
-        // Determine symbol kind based on match type and content
-        let kind = match node.match_type.as_str() {
-            "class_declaration" => SymbolKind::CLASS,
-            "impl_item" => SymbolKind::CLASS,
-            _ if node.text.contains("self") || node.text.contains("this") => SymbolKind::METHOD,
-            _ => SymbolKind::FUNCTION,
-        };
+        // Determine symbol kind using language handler
+        let kind = handler.determine_symbol_kind(&node.match_type, &node.text);
 
         let range = Range {
             start: Position {

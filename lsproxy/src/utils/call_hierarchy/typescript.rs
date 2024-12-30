@@ -1,4 +1,5 @@
 use super::LanguageCallHierarchy;
+use lsp_types::SymbolKind;
 
 pub struct TypeScriptCallHierarchy {}
 
@@ -58,5 +59,17 @@ impl LanguageCallHierarchy for TypeScriptCallHierarchy {
             node_type,
             "function_declaration" | "method_definition" | "arrow_function"
         )
+    }
+
+    fn get_enclosing_function_pattern(&self) -> &'static str {
+        "(function_declaration | method_definition | class_declaration) @cap"
+    }
+
+    fn determine_symbol_kind(&self, node_type: &str, node_text: &str) -> SymbolKind {
+        match node_type {
+            "class_declaration" => SymbolKind::CLASS,
+            _ if node_text.contains("this") => SymbolKind::METHOD,
+            _ => SymbolKind::FUNCTION,
+        }
     }
 }

@@ -1,4 +1,5 @@
 use super::LanguageCallHierarchy;
+use lsp_types::SymbolKind;
 
 pub struct PythonCallHierarchy {}
 
@@ -35,5 +36,17 @@ impl LanguageCallHierarchy for PythonCallHierarchy {
 
     fn is_function_type(&self, node_type: &str) -> bool {
         matches!(node_type, "function_definition")
+    }
+
+    fn get_enclosing_function_pattern(&self) -> &'static str {
+        "(function_definition | class_definition) @cap"
+    }
+
+    fn determine_symbol_kind(&self, node_type: &str, node_text: &str) -> SymbolKind {
+        match node_type {
+            "class_definition" => SymbolKind::CLASS,
+            _ if node_text.contains("self") => SymbolKind::METHOD,
+            _ => SymbolKind::FUNCTION,
+        }
     }
 }
