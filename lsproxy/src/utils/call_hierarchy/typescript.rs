@@ -1,5 +1,6 @@
 use super::LanguageCallHierarchy;
 use lsp_types::SymbolKind;
+use tree_sitter_typescript;
 
 pub struct TypeScriptCallHierarchy {}
 
@@ -71,5 +72,14 @@ impl LanguageCallHierarchy for TypeScriptCallHierarchy {
             _ if node_text.contains("this") => SymbolKind::METHOD,
             _ => SymbolKind::FUNCTION,
         }
+    }
+
+    fn configure_parser(&self, parser: &mut tree_sitter::Parser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        parser.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())?;
+        Ok(())
+    }
+
+    fn is_package_root(&self, dir: &std::path::Path) -> bool {
+        dir.join("package.json").exists()
     }
 }

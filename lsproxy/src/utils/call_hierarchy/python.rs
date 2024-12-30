@@ -1,5 +1,6 @@
 use super::LanguageCallHierarchy;
 use lsp_types::SymbolKind;
+use tree_sitter_python;
 
 pub struct PythonCallHierarchy {}
 
@@ -48,5 +49,14 @@ impl LanguageCallHierarchy for PythonCallHierarchy {
             _ if node_text.contains("self") => SymbolKind::METHOD,
             _ => SymbolKind::FUNCTION,
         }
+    }
+
+    fn configure_parser(&self, parser: &mut tree_sitter::Parser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
+        Ok(())
+    }
+
+    fn is_package_root(&self, dir: &std::path::Path) -> bool {
+        dir.join("__init__.py").exists()
     }
 }

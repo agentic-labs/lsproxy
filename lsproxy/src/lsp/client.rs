@@ -9,8 +9,7 @@ use lsp_types::{
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tree_sitter::{Parser, Point, Query, QueryCursor, Tree};
-use tree_sitter_python;
-use tree_sitter_typescript;
+use streaming_iterator::StreamingIterator;
 
 // Types for manual call hierarchy implementation
 #[derive(Debug, Clone)]
@@ -526,24 +525,23 @@ pub trait LspClient: Send {
         &mut self,
         file_path: &str,
     ) -> Result<Package, Box<dyn Error + Send + Sync>> {
-        // For Python and TypeScript, we consider the directory containing the file as the package
-        // and walk up until we find a package identifier (package.json or __init__.py)
         let path = PathBuf::from(file_path);
         let mut current_dir = path.parent().ok_or("Invalid file path")?;
 
         // Start with the immediate directory
         let mut package_path = current_dir.to_str().unwrap_or("").to_string();
 
+        // Get the language handler
+        let lang_str = detect_language_string(file_path)?;
+        let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
+            .ok_or_else(|| format!("No call hierarchy handler for language: {}", lang_str))?;
+
         // Walk up the directory tree looking for package identifiers
         while let Some(parent) = current_dir.parent() {
-            let has_package_json = parent.join("package.json").exists();
-            let has_init_py = parent.join("__init__.py").exists();
-
-            if has_package_json || has_init_py {
+            if handler.is_package_root(parent) {
                 package_path = parent.to_string_lossy().to_string();
                 break;
             }
-
             current_dir = parent;
         }
 
@@ -578,20 +576,13 @@ pub trait LspClient: Send {
         let lang_str = detect_language_string(file_path)?;
         debug!("get_referenced_object: Detected language: {}", lang_str);
 
-        match lang_str.as_str() {
-            "python" => {
-                debug!("get_referenced_object: Configuring Python parser");
-                parser.set_language(tree_sitter_python::language())?;
-            }
-            "typescript" | "javascript" => {
-                debug!("get_referenced_object: Configuring TypeScript parser");
-                parser.set_language(tree_sitter_typescript::language_typescript())?;
-            }
-            _ => {
+        let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
+            .ok_or_else(|| {
                 debug!("get_referenced_object: Unsupported language: {}", lang_str);
-                return Err("Unsupported language".into());
-            }
-        };
+                "Unsupported language"
+            })?;
+        debug!("get_referenced_object: Configuring parser for {}", lang_str);
+        handler.configure_parser(&mut parser)?;
 
         // Parse the file
         let tree = Arc::new(
@@ -630,7 +621,7 @@ pub trait LspClient: Send {
 
         // Get the appropriate query based on language
         let query_str = self.get_function_definition_query(file_path)?;
-        let query = Query::new(parser.language().unwrap(), query_str)?;
+        let query = Query::new(&parser.language().unwrap(), query_str)?;
         let mut cursor = QueryCursor::new();
         debug!("get_referenced_object: Prepared query for finding definitions");
 
@@ -668,7 +659,10 @@ pub trait LspClient: Send {
                         name,
                         package_path: pkg.path.clone(),
                         file_path: file_path.to_string(),
-                        range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
+                        range: match self.tree_sitter_to_lsp_range(&initial_node, &source) {
+                            Ok(r) => r,
+                            Err(_e) => return Ok(None),
+                        },
                         node_range: (initial_node.start_byte(), initial_node.end_byte()),
                         source: source.clone(),
                         tree: tree.clone(),
@@ -682,7 +676,10 @@ pub trait LspClient: Send {
                             name,
                             package_path: pkg.path.clone(),
                             file_path: file_path.to_string(),
-                            range: self.tree_sitter_to_lsp_range(&parent, &source)?,
+                            range: match self.tree_sitter_to_lsp_range(&parent, &source) {
+                                Ok(r) => r,
+                                Err(_e) => return Ok(None),
+                            },
                             node_range: (parent.start_byte(), parent.end_byte()),
                             source: source.clone(),
                             tree: tree.clone(),
@@ -711,23 +708,32 @@ pub trait LspClient: Send {
                     initial_node.kind()
                 );
                 // Get the name from the definition
-                for capture in cursor
-                    .matches(&query, initial_node, source.as_bytes())
-                    .flat_map(|m| m.captures)
-                {
-                    if query.capture_names()[capture.index as usize].ends_with("_name") {
-                        let name = source[capture.node.byte_range()].to_string();
-                        debug!("get_referenced_object: Found definition name: {}", name);
-                        return Ok(Some(Object {
-                            name,
-                            package_path: pkg.path.clone(),
-                            file_path: file_path.to_string(),
-                            range: self.tree_sitter_to_lsp_range(&initial_node, &source)?,
-                            node_range: (initial_node.start_byte(), initial_node.end_byte()),
-                            source: source.clone(),
-                            tree: tree.clone(),
-                            is_reference: false,
-                        }));
+                let mut query_matches = cursor.matches(&query, initial_node, source.as_bytes());
+                loop {
+                    query_matches.advance();
+                    match query_matches.get() {
+                        Some(match_) => {
+                            for capture in match_.captures {
+                                if query.capture_names()[capture.index as usize].ends_with("_name") {
+                                    let name = source[capture.node.byte_range()].to_string();
+                                    debug!("get_referenced_object: Found definition name: {}", name);
+                                    return Ok(Some(Object {
+                                        name,
+                                        package_path: pkg.path.clone(),
+                                        file_path: file_path.to_string(),
+                                        range: match self.tree_sitter_to_lsp_range(&initial_node, &source) {
+                                            Ok(r) => r,
+                                            Err(_e) => return Ok(None),
+                                        },
+                                        node_range: (initial_node.start_byte(), initial_node.end_byte()),
+                                        source: source.clone(),
+                                        tree: tree.clone(),
+                                        is_reference: false,
+                                    }));
+                                }
+                            }
+                        },
+                        None => break,
                     }
                 }
                 debug!("get_referenced_object: No name found in definition node");
@@ -846,24 +852,30 @@ pub trait LspClient: Send {
         // Query to find function calls in the AST
         let query_str = self.get_function_call_query(&obj.file_path)?;
 
-        let query = Query::new(obj.tree.language(), query_str)?;
+        let query = Query::new(&obj.tree.language(), query_str)?;
         let mut cursor = QueryCursor::new();
         // Get the root node and find the node for our range
         let root_node = obj.tree.root_node();
         let node = root_node
             .descendant_for_byte_range(obj.node_range.0, obj.node_range.1)
             .ok_or("Failed to find node for range")?;
-        let matches = cursor.matches(&query, node, obj.source.as_bytes());
+        let mut matches = cursor.matches(&query, node, obj.source.as_bytes());
 
         let mut ranges = Vec::new();
-        for match_ in matches {
-            for capture in match_.captures {
-                if query.capture_names()[capture.index as usize] == "call" {
-                    let node = capture.node;
-                    let start_pos = self.tree_sitter_to_lsp_pos(&node, &obj.source)?;
-                    let end_pos = self.tree_sitter_to_lsp_pos_end(&node, &obj.source)?;
-                    ranges.push(lsp_types::Range::new(start_pos, end_pos));
-                }
+        loop {
+            matches.advance();
+            match matches.get() {
+                Some(match_) => {
+                    for capture in match_.captures {
+                        if query.capture_names()[capture.index as usize] == "call" {
+                            let node = capture.node;
+                            let start_pos = self.tree_sitter_to_lsp_pos(&node, &obj.source)?;
+                            let end_pos = self.tree_sitter_to_lsp_pos_end(&node, &obj.source)?;
+                            ranges.push(lsp_types::Range::new(start_pos, end_pos));
+                        }
+                    }
+                },
+                None => break,
             }
         }
 
