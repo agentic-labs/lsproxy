@@ -1,6 +1,7 @@
 use std::{error::Error, path::Path, process::Stdio};
 
 use async_trait::async_trait;
+use log::debug;
 use lsp_types::{
     ClientCapabilities, DocumentSymbolClientCapabilities, InitializeParams,
     TextDocumentClientCapabilities,
@@ -82,11 +83,18 @@ impl LspClient for RustAnalyzerClient {
 
     async fn setup_workspace(
         &mut self,
-        _root_path: &str,
+        root_path: &str,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        debug!("RustAnalyzer: Setting up workspace at {}", root_path);
+        
         // This is required for workspace features like go to definition to work
-        self.send_request("rust-analyzer/reloadWorkspace", None)
-            .await?;
+        debug!("RustAnalyzer: Reloading workspace");
+        let result = self.send_request("rust-analyzer/reloadWorkspace", None).await?;
+        debug!("RustAnalyzer: Reload workspace result: {:?}", result);
+
+        // Wait a bit for indexing to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        
         Ok(())
     }
 }
@@ -96,13 +104,17 @@ impl RustAnalyzerClient {
         root_path: &str,
         watch_events_rx: Receiver<DebouncedEvent>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        debug!("RustAnalyzer: Starting new instance for {}", root_path);
         let process = Command::new("rust-analyzer")
             .current_dir(root_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(|e| {
+                debug!("RustAnalyzer: Failed to start process: {}", e);
+                Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+            })?;
 
         let process_handler = ProcessHandler::new(process)
             .await

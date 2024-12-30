@@ -211,7 +211,7 @@ pub trait LspClient: Send {
         position: Position,
     ) -> Result<GotoDefinitionResponse, Box<dyn Error + Send + Sync>> {
         debug!(
-            "Requesting goto definition for {}, line {}, character {}",
+            "text_document_definition: Starting for {}, line {}, character {}",
             file_path, position.line, position.character
         );
 
@@ -251,18 +251,36 @@ pub trait LspClient: Send {
             partial_result_params: PartialResultParams::default(),
         };
 
+        debug!(
+            "text_document_definition: Sending request with params: {:?}",
+            params
+        );
         let result = self
             .send_request(
                 "textDocument/definition",
                 Some(serde_json::to_value(params)?),
             )
             .await?;
+        debug!(
+            "text_document_definition: Raw response: {:?}",
+            result
+        );
 
         // If result is null, default to an empty array response instead of failing deserialization
         let goto_resp: GotoDefinitionResponse = if result.is_null() {
+            debug!("text_document_definition: Got null response");
             GotoDefinitionResponse::Array(Vec::new())
         } else {
-            serde_json::from_value(result)?
+            match serde_json::from_value::<GotoDefinitionResponse>(result.clone()) {
+                Ok(resp) => {
+                    debug!("text_document_definition: Successfully parsed response: {:?}", resp);
+                    resp
+                }
+                Err(e) => {
+                    debug!("text_document_definition: Failed to parse response: {}", e);
+                    return Err(e.into());
+                }
+            }
         };
 
         debug!("Received goto definition response");
@@ -438,7 +456,13 @@ pub trait LspClient: Send {
                 let definition_obj = if obj.is_reference {
                     debug!("Found reference, looking up definition");
                     // Look up the definition
-                    let def_response = self.text_document_definition(file_path, position).await?;
+                    let def_response = self.text_document_definition(
+                        file_path,
+                        Position {
+                            line: obj.range.start.line,
+                            character: obj.range.start.character,
+                        },
+                    ).await?;
 
                     match def_response {
                         GotoDefinitionResponse::Array(locations) if !locations.is_empty() => {
@@ -628,13 +652,14 @@ pub trait LspClient: Send {
         // Create an Object for the node we found
         let obj = match initial_node.kind() {
             // If we're on an identifier that's being called (function reference)
-            "identifier" | "property_identifier" => {
+            "identifier" | "property_identifier" | "field_identifier" | "self" => {
                 let name = source[initial_node.byte_range()].to_string();
                 debug!("get_referenced_object: Found function reference: {}", name);
 
-                // Walk up the tree to find a call expression
+                // Walk up the tree to find a call expression or function definition
                 let mut current = initial_node;
                 let mut found_call = false;
+                let mut found_function = false;
                 debug!(
                     "get_referenced_object: Starting node walk from: {}",
                     current.kind()
@@ -649,27 +674,31 @@ pub trait LspClient: Send {
                         found_call = true;
                         debug!("get_referenced_object: Found call expression");
                         break;
+                    } else if parent.kind() == "function_item" {
+                        found_function = true;
+                        debug!("get_referenced_object: Found function definition");
+                        break;
                     }
                     current = parent;
                 }
 
-                if found_call {
-                    debug!("get_referenced_object: Creating object for function call");
+                if found_call || found_function {
+                    debug!("get_referenced_object: Creating object for {}", if found_call { "function call" } else { "function definition" });
                     Some(Object {
                         name,
                         package_path: pkg.path.clone(),
                         file_path: file_path.to_string(),
-                        range: match self.tree_sitter_to_lsp_range(&initial_node, &source) {
+                        range: match self.tree_sitter_to_lsp_range(&current, &source) {
                             Ok(r) => r,
                             Err(_e) => return Ok(None),
                         },
-                        node_range: (initial_node.start_byte(), initial_node.end_byte()),
+                        node_range: (current.start_byte(), current.end_byte()),
                         source: source.clone(),
                         tree: tree.clone(),
-                        is_reference: true,
+                        is_reference: found_call,
                     })
                 } else if let Some(parent) = initial_node.parent() {
-                    if parent.kind() == "function_definition" || parent.kind() == "method_definition" {
+                    if parent.kind() == "function_definition" || parent.kind() == "method_definition" || parent.kind() == "function_item" {
                         debug!("get_referenced_object: Found function/method definition");
                         // Use the parent node (full function) for the range and node_range
                         Some(Object {
