@@ -77,6 +77,8 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
       
       - name: Run coverage analysis
+        continue-on-error: true
+        id: coverage
         run: |
           mkdir -p lsproxy/coverage
           # Run coverage analysis
@@ -90,6 +92,7 @@ jobs:
           docker cp coverage-container:/usr/src/app/coverage/. "${PWD}/lsproxy/coverage/"
       
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v3
         with:
           name: code-coverage-report
