@@ -1,17 +1,10 @@
-use crate::api_types::{ErrorResponse, FileRange};
+use crate::api_types::{ErrorResponse, ReadSourceCodeRequest, ReadSourceCodeResponse};
 use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
 use log::{error, info};
 use lsp_types::{Position as LspPosition, Range};
-use serde::Serialize;
-use utoipa::ToSchema;
 
 use crate::AppState;
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ReadSourceCodeResponse {
-    pub source_code: String,
-}
 
 /// Read source code from a file in the workspace
 ///
@@ -20,15 +13,15 @@ pub struct ReadSourceCodeResponse {
     post,
     path = "/workspace/read-source-code",
     tag = "workspace",
-    request_body = FileRange,
+    request_body = ReadSourceCodeRequest,
     responses(
         (status = 200, description = "Source code retrieved successfully", body = ReadSourceCodeResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn read_source_code(data: Data<AppState>, info: Json<FileRange>) -> HttpResponse {
-    info!("Reading source code from file: {}", info.path);
+pub async fn read_source_code(data: Data<AppState>, req: Json<ReadSourceCodeRequest>) -> HttpResponse {
+    info!("Reading source code from file: {}", req.path);
 
     let manager = data
         .manager
@@ -41,18 +34,18 @@ pub async fn read_source_code(data: Data<AppState>, info: Json<FileRange>) -> Ht
         })
         .unwrap();
 
-    let lsp_range = Some(Range::new(
+    let lsp_range = req.range.as_ref().map(|file_range| Range::new(
         LspPosition {
-            line: info.start.line,
-            character: info.start.character,
+            line: file_range.start.line,
+            character: file_range.start.character,
         },
         LspPosition {
-            line: info.end.line,
-            character: info.end.character,
+            line: file_range.end.line,
+            character: file_range.end.character,
         },
     ));
 
-    match manager.read_source_code(&info.path, lsp_range).await {
+    match manager.read_source_code(&req.path, lsp_range).await {
         Ok(source_code) => HttpResponse::Ok().json(ReadSourceCodeResponse { source_code }),
         Err(e) => {
             error!("Failed to read source code: {:?}", e);

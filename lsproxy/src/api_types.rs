@@ -135,6 +135,25 @@ impl From<FileRange> for lsp_types::Range {
     }
 }
 
+/// Request to read source code from a file in the workspace.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReadSourceCodeRequest {
+    /// The path to the file (required).
+    #[schema(example = "src/main.py")]
+    pub path: String,
+
+    /// The range of lines and characters to read (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<FileRange>,
+}
+
+/// Response to a read source code request.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReadSourceCodeResponse {
+    /// The source code that was read.
+    pub source_code: String,
+}
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CodeContext {
     pub range: FileRange,
