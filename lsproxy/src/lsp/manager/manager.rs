@@ -457,110 +457,17 @@ impl Manager {
         let mut locked_client = client.lock().await;
         debug!("[IncomingCalls] Client lock acquired");
 
-        // Get references to this function
-        let refs = locked_client
-            .text_document_reference(
-                item.uri.path(),
-                item.selection_range.start, // Use selection range which points to the function name
-            )
+        // Use LSP's callHierarchy/incomingCalls request
+        let result = locked_client
+            .call_hierarchy_incoming_calls(item.clone())
             .await
             .map_err(|e| {
-                error!("[IncomingCalls] Failed to get references: {}", e);
-                LspManagerError::InternalError(format!("Reference retrieval failed: {}", e))
+                error!("[IncomingCalls] Failed to get incoming calls: {}", e);
+                LspManagerError::InternalError(format!("Incoming calls retrieval failed: {}", e))
             })?;
-        debug!("[IncomingCalls] Found {} references", refs.len());
 
-        // Group references by their enclosing function
-        let mut incoming_calls = std::collections::HashMap::new();
-        for location in refs {
-            debug!(
-                "[IncomingCalls] Processing reference at {}:{}",
-                location.uri, location.range.start.line
-            );
-
-            match find_enclosing_function(&location).await {
-                Ok(Some(caller)) => {
-                    debug!(
-                        "[IncomingCalls] Found enclosing function '{}' at {}:{}",
-                        caller.name, caller.uri, caller.range.start.line
-                    );
-                    let caller_key = (caller.uri.to_string(), caller.range.start.line);
-                    let entry = incoming_calls.entry(caller_key).or_insert_with(|| {
-                        CallHierarchyIncomingCall {
-                            from: caller,
-                            from_ranges: vec![],
-                        }
-                    });
-                    entry.from_ranges.push(location.range);
-                    debug!(
-                        "[IncomingCalls] Added call site at line {} to function '{}'",
-                        location.range.start.line, entry.from.name
-                    );
-                }
-                Ok(None) => {
-                    debug!(
-                        "[IncomingCalls] No enclosing function found, using module scope for {}",
-                        location.uri
-                    );
-                    // If no enclosing function found, use the file's package/module scope
-                    let file_scope = CallHierarchyItem {
-                        name: PathBuf::from(location.uri.path())
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("module")
-                            .to_string(),
-                        kind: lsp_types::SymbolKind::MODULE,
-                        tags: None,
-                        detail: Some(format!(
-                            "module • {}",
-                            PathBuf::from(location.uri.path())
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("")
-                        )),
-                        uri: location.uri.clone(),
-                        range: lsp_types::Range::new(
-                            lsp_types::Position::new(0, 0),
-                            lsp_types::Position::new(0, 0),
-                        ),
-                        selection_range: lsp_types::Range::new(
-                            lsp_types::Position::new(0, 0),
-                            lsp_types::Position::new(0, 0),
-                        ),
-                        data: None,
-                    };
-                    let key = (location.uri.to_string(), 0);
-                    let entry =
-                        incoming_calls
-                            .entry(key)
-                            .or_insert_with(|| CallHierarchyIncomingCall {
-                                from: file_scope,
-                                from_ranges: vec![],
-                            });
-                    entry.from_ranges.push(location.range);
-                    debug!(
-                        "[IncomingCalls] Added module-level call site at line {}",
-                        location.range.start.line
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        "[IncomingCalls] AST analysis failed for reference at {}:{}: {}",
-                        location.uri, location.range.start.line, e
-                    );
-                    return Err(LspManagerError::InternalError(format!(
-                        "AST analysis failed: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        debug!(
-            "[IncomingCalls] Found {} unique callers",
-            incoming_calls.len()
-        );
-        Ok(incoming_calls.into_values().collect())
+        debug!("[IncomingCalls] Found {} incoming calls", result.len());
+        Ok(result)
     }
 
     pub async fn outgoing_calls(
@@ -597,91 +504,17 @@ impl Manager {
         let mut locked_client = client.lock().await;
         debug!("[OutgoingCalls] Client lock acquired");
 
-        // Get the package info for the file
-        let pkg = locked_client
-            .get_narrowest_package(item.uri.path())
+        // Use LSP's callHierarchy/outgoingCalls request
+        let result = locked_client
+            .call_hierarchy_outgoing_calls(item.clone())
             .await
             .map_err(|e| {
-                error!("[OutgoingCalls] Failed to get package info: {}", e);
-                LspManagerError::InternalError(format!("Failed to get package info: {}", e))
-            })?;
-        debug!("[OutgoingCalls] Got package info");
-
-        // Get the object for this function
-        let obj = locked_client
-            .get_referenced_object(&pkg, item.uri.path(), item.selection_range.start)
-            .await
-            .map_err(|e| {
-                error!("[OutgoingCalls] Failed to get function object: {}", e);
-                LspManagerError::InternalError(format!("Failed to get function object: {}", e))
+                error!("[OutgoingCalls] Failed to get outgoing calls: {}", e);
+                LspManagerError::InternalError(format!("Outgoing calls retrieval failed: {}", e))
             })?;
 
-        if let Some(obj) = obj {
-            debug!("[OutgoingCalls] Found function object, analyzing calls");
-            // Find all function calls in this object
-            let call_ranges = locked_client.find_function_calls(&obj).await.map_err(|e| {
-                error!("[OutgoingCalls] Failed to find function calls: {}", e);
-                LspManagerError::InternalError(format!("Failed to find function calls: {}", e))
-            })?;
-
-            debug!(
-                "[OutgoingCalls] Found {} potential function calls",
-                call_ranges.len()
-            );
-
-            // Convert to CallHierarchyOutgoingCall format
-            let mut outgoing_calls = Vec::new();
-            for range in call_ranges {
-                debug!(
-                    "[OutgoingCalls] Analyzing call at line {}:{}",
-                    range.start.line, range.start.character
-                );
-                // Get the target function for this call
-                if let Ok(Some(target_obj)) = locked_client
-                    .get_referenced_object(&pkg, item.uri.path(), range.start)
-                    .await
-                {
-                    debug!(
-                        "[OutgoingCalls] Found target: {} in {}",
-                        target_obj.name, target_obj.file_path
-                    );
-                    let target_item = CallHierarchyItem {
-                        name: target_obj.name,
-                        kind: SymbolKind::FUNCTION,
-                        tags: None,
-                        detail: Some(format!(
-                            "{} • {}",
-                            PathBuf::from(&target_obj.file_path)
-                                .parent()
-                                .and_then(|p| p.file_name())
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(""),
-                            PathBuf::from(&target_obj.file_path)
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("")
-                        )),
-                        uri: Url::from_file_path(&target_obj.file_path.clone()).unwrap(),
-                        range: target_obj.range,
-                        selection_range: target_obj.range,
-                        data: None,
-                    };
-                    outgoing_calls.push(CallHierarchyOutgoingCall {
-                        to: target_item,
-                        from_ranges: vec![range],
-                    });
-                }
-            }
-
-            debug!(
-                "[OutgoingCalls] Returning {} confirmed outgoing calls",
-                outgoing_calls.len()
-            );
-            Ok(outgoing_calls)
-        } else {
-            debug!("[OutgoingCalls] No function object found");
-            Ok(Vec::new())
-        }
+        debug!("[OutgoingCalls] Found {} outgoing calls", result.len());
+        Ok(result)
     }
 }
 

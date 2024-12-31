@@ -33,6 +33,8 @@ use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
     CallHierarchyPrepareParams, CallHierarchyClientCapabilities,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams,
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult,
     PartialResultParams, PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams,
@@ -387,6 +389,106 @@ pub trait LspClient: Send {
             position.line
         );
         Ok(references)
+    }
+
+    async fn call_hierarchy_incoming_calls(
+        &mut self,
+        item: CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyIncomingCall>, Box<dyn Error + Send + Sync>> {
+        debug!(
+            "call_hierarchy_incoming_calls: Starting for item: name={}, uri={}, range={:?}",
+            item.name, item.uri, item.selection_range
+        );
+
+        let params = CallHierarchyIncomingCallsParams {
+            item,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = self
+            .send_request(
+                "callHierarchy/incomingCalls",
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+
+        debug!(
+            "call_hierarchy_incoming_calls: Raw response from server: {:#?}",
+            result
+        );
+
+        if result.is_null() {
+            debug!("call_hierarchy_incoming_calls: Server returned null response");
+            Ok(vec![])
+        } else {
+            match serde_json::from_value::<Vec<CallHierarchyIncomingCall>>(result.clone()) {
+                Ok(calls) => {
+                    debug!(
+                        "call_hierarchy_incoming_calls: Successfully parsed {} calls",
+                        calls.len()
+                    );
+                    Ok(calls)
+                }
+                Err(e) => {
+                    error!(
+                        "call_hierarchy_incoming_calls: Failed to parse response: {}. Raw response: {:?}",
+                        e, result
+                    );
+                    Err(e.into())
+                }
+            }
+        }
+    }
+
+    async fn call_hierarchy_outgoing_calls(
+        &mut self,
+        item: CallHierarchyItem,
+    ) -> Result<Vec<CallHierarchyOutgoingCall>, Box<dyn Error + Send + Sync>> {
+        debug!(
+            "call_hierarchy_outgoing_calls: Starting for item: name={}, uri={}, range={:?}",
+            item.name, item.uri, item.selection_range
+        );
+
+        let params = CallHierarchyOutgoingCallsParams {
+            item,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = self
+            .send_request(
+                "callHierarchy/outgoingCalls",
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+
+        debug!(
+            "call_hierarchy_outgoing_calls: Raw response from server: {:#?}",
+            result
+        );
+
+        if result.is_null() {
+            debug!("call_hierarchy_outgoing_calls: Server returned null response");
+            Ok(vec![])
+        } else {
+            match serde_json::from_value::<Vec<CallHierarchyOutgoingCall>>(result.clone()) {
+                Ok(calls) => {
+                    debug!(
+                        "call_hierarchy_outgoing_calls: Successfully parsed {} calls",
+                        calls.len()
+                    );
+                    Ok(calls)
+                }
+                Err(e) => {
+                    error!(
+                        "call_hierarchy_outgoing_calls: Failed to parse response: {}. Raw response: {:?}",
+                        e, result
+                    );
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn prepare_call_hierarchy(
