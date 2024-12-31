@@ -1,23 +1,28 @@
 use lsproxy::api_types::{
-    set_global_mount_dir, FilePosition, FileRange, Position, Symbol, SymbolResponse,
+    set_global_mount_dir, FilePosition, FileRange, HealthResponse, Position, Symbol, SymbolResponse,
 };
 use lsproxy::{initialize_app_state, run_server};
 use reqwest;
-use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-fn wait_for_server(url: &str) {
+fn wait_for_server(base_url: &str) {
     let client = reqwest::blocking::Client::new();
+    let health_url = format!("{}/v1/system/health", base_url);
+
     for _ in 0..30 {
         // Try for 30 seconds
-        if client.get(url).send().is_ok() {
-            return;
+        if let Ok(response) = client.get(&health_url).send() {
+            if let Ok(health) = response.json::<HealthResponse>() {
+                if health.status == "ok" {
+                    return;
+                }
+            }
         }
         thread::sleep(Duration::from_secs(1));
     }
-    panic!("Server did not respond within 30 seconds");
+    panic!("Server did not respond with healthy status within 30 seconds");
 }
 
 #[test]
@@ -55,13 +60,8 @@ fn test_server_integration_java() -> Result<(), Box<dyn std::error::Error>> {
         return Err(error_msg.into());
     }
 
-    // Check if the server is running
-    match TcpStream::connect("0.0.0.0:4444") {
-        Ok(_) => println!("Server is running"),
-        Err(e) => return Err(format!("Failed to connect to server: {}", e).into()),
-    }
     let base_url = "http://localhost:4444";
-    wait_for_server(&format!("{}/v1/workspace/list-files", base_url));
+    wait_for_server(base_url);
 
     let client = reqwest::blocking::Client::new();
     // Test workspace/list-files endpoint

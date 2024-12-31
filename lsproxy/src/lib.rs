@@ -1,11 +1,13 @@
 use actix_cors::Cors;
+mod middleware;
 use actix_web::{
     web::{get, post, resource, scope, Data},
     App, HttpServer,
 };
-use api_types::{CodeContext, ErrorResponse, FileRange, Position};
+use api_types::{CodeContext, ErrorResponse, FileRange, HealthResponse, Position};
 use handlers::read_source_code;
 use log::warn;
+use middleware::{validate_jwt_config, JwtMiddleware};
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -25,7 +27,9 @@ use crate::api_types::{
     DefinitionResponse, FilePosition, FileSymbolsRequest, GetCallHierarchyRequest, GetDefinitionRequest,
     GetReferencesRequest, ReferencesResponse, SupportedLanguages, Symbol, SymbolResponse,
 };
-use crate::handlers::{definitions_in_file, find_definition, find_references, list_files, get_call_hierarchy};
+
+use crate::handlers::{definitions_in_file, find_definition, find_references, list_files, get_call_hierarchy,health_check};
+
 use crate::lsp::manager::Manager;
 // use crate::utils::doc_utils::make_code_sample;
 
@@ -38,19 +42,14 @@ pub fn check_mount_dir() -> std::io::Result<()> {
 #[openapi(
     info(
         title = "lsproxy",
-        version = "0.1.0a6",
+        version = "0.1.3",
         license(
             name = "Apache-2.0",
             url = "https://www.apache.org/licenses/LICENSE-2.0"
         )
     ),
-    paths(
-        crate::handlers::definitions_in_file,
-        crate::handlers::find_definition,
-        crate::handlers::find_references,
-        crate::handlers::list_files,
-        crate::handlers::read_source_code,
-        crate::handlers::get_call_hierarchy,
+    security(
+        ("bearer_auth" = [])
     ),
     components(
         schemas(
@@ -71,7 +70,17 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             FileRange,
             CallLocation,
             CallReference,
+            HealthResponse,
         )
+    ),
+    paths(
+        crate::handlers::definitions_in_file,
+        crate::handlers::find_definition,
+        crate::handlers::find_references,
+        crate::handlers::health_check,
+        crate::handlers::list_files,
+        crate::handlers::read_source_code,
+        crate::handlers::get_call_hierarchy,
     ),
     tags(
         (name = "lsproxy-api", description = "LSP Proxy API")
@@ -143,7 +152,25 @@ pub async fn run_server_with_port_and_host(
     port: u16,
     host: &str,
 ) -> std::io::Result<()> {
-    let openapi = ApiDoc::openapi();
+    let mut openapi = ApiDoc::openapi();
+
+    // Create components if none exist
+    if openapi.components.is_none() {
+        openapi.components = Some(utoipa::openapi::Components::default());
+    }
+
+    // Now we can safely unwrap and modify
+    if let Some(components) = openapi.components.as_mut() {
+        components.add_security_scheme(
+            "bearer_auth",
+            utoipa::openapi::security::SecurityScheme::Http(
+                utoipa::openapi::security::HttpBuilder::new()
+                    .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
 
     // Parse the full server URL to get just the path component
     let server_path = openapi
@@ -154,6 +181,14 @@ pub async fn run_server_with_port_and_host(
         .map(|url| url.path().to_string()) // Convert path to owned String
         .and_then(|path| path.strip_prefix('/').map(|s| s.to_string())) // Convert stripped result to String
         .unwrap_or_else(|| String::new()); // Use empty string as default
+
+    match validate_jwt_config() {
+        Ok(secret) => secret,
+        Err(e) => {
+            eprintln!("Configuration error: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     HttpServer::new(move || {
         let mut api_scope = scope(format!("/{}", server_path).as_str());
@@ -181,6 +216,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(post().to(read_source_code))),
                 ("/symbol/call-hierarchy", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(get_call_hierarchy))),
+                ("/system/health", Some(Method::Get)) =>
+                    api_scope.service(resource(path).route(get().to(health_check))),
                 (p, m) => panic!(
                     "Invalid path configuration for {}: {:?}. Ensure the OpenAPI spec matches your handlers.", 
                     p,
@@ -192,11 +229,17 @@ pub async fn run_server_with_port_and_host(
         App::new()
             .wrap(Cors::permissive())
             .app_data(app_state.clone())
+            .configure(|cfg| {
+                if middleware::is_auth_enabled() {
+                    cfg.service(api_scope.wrap(JwtMiddleware));
+                } else {
+                    cfg.service(api_scope);
+                }
+            })
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", openapi.clone())
             )
-            .service(api_scope)
     })
     .bind(format!("{}:{}", host, port))?
     .run()
@@ -214,7 +257,7 @@ pub async fn run_server_with_port_and_host(
 pub fn write_openapi_to_file(file_path: &PathBuf) -> std::io::Result<()> {
     // We use a clone since we're just adding the docs and writing it to the file. We don't need
     // this for runtime
-    let openapi = ApiDoc::openapi().clone();
+    let mut openapi = ApiDoc::openapi().clone();
     // if let Some(path_item) = openapi.paths.paths.get_mut("/symbol/find-definition") {
     //     if let Some(post_op) = &mut path_item.post {
     //         let mut extensions = Extensions::default();
@@ -225,6 +268,24 @@ pub fn write_openapi_to_file(file_path: &PathBuf) -> std::io::Result<()> {
     //         post_op.extensions = Some(extensions);
     //     }
     // }
+
+    // Create components if none exist
+    if openapi.components.is_none() {
+        openapi.components = Some(utoipa::openapi::Components::default());
+    }
+
+    // Now we can safely unwrap and modify
+    if let Some(components) = openapi.components.as_mut() {
+        components.add_security_scheme(
+            "bearer_auth",
+            utoipa::openapi::security::SecurityScheme::Http(
+                utoipa::openapi::security::HttpBuilder::new()
+                    .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
     let openapi_json =
         serde_json::to_string_pretty(&openapi).expect("Failed to serialize OpenAPI to JSON");
     let mut file = File::create(file_path)?;

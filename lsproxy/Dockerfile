@@ -3,7 +3,7 @@ FROM rust:1.81.0-slim-bookworm
 # Set the working directory in the container
 WORKDIR /usr/src/app
 
-# Install runtime and development dependencies, Python, Node.js, and npm
+# Install runtime and development dependencies, Python, Node.js, PHP, and npm
 RUN apt-get update && apt-get install \
     -y --no-install-recommends \
     pkg-config \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install \
     libssl3 \
     ca-certificates \
     git \
+    procps \
     python3 \
     python3-pip \
     python3-venv \
@@ -19,10 +20,26 @@ RUN apt-get update && apt-get install \
     build-essential \
     gcc \
     g++ \
+    php \
+    php-xml \
+    php-mbstring \
+    php-curl \
+    php-zip \
+    unzip \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Install PHPActor
+RUN mkdir -p /usr/local/share/phpactor && \
+    cd /usr/local/share/phpactor && \
+    curl -L https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar -o phpactor && \
+    chmod +x phpactor && \
+    ln -s /usr/local/share/phpactor/phpactor /usr/local/bin/phpactor
 
 # Config Python
 RUN ln -sf /usr/bin/python3 /usr/bin/python
@@ -56,6 +73,18 @@ RUN pip install jedi-language-server ast-grep-cli
 # Install global npm packages
 RUN npm install -g typescript-language-server typescript
 
+# Install go and Gopls
+
+ARG TARGETARCH
+RUN curl -O -L "https://go.dev/dl/go1.21.4.linux-${TARGETARCH}.tar.gz" && \
+    tar -C /usr/local -xzf go1.21.4.linux-${TARGETARCH}.tar.gz && \
+    rm go1.21.4.linux-${TARGETARCH}.tar.gz && \
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@latest && \
+    cp ~/go/bin/gopls /usr/local/bin/gopls
+
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/root/go
+ENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH
 # Install coverage tools
 RUN cargo install cargo-llvm-cov
 RUN rustup component add llvm-tools-preview

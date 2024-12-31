@@ -1,0 +1,8 @@
+id: trait
+language: php
+rule:
+  kind: name
+  pattern: $NAME
+  inside:
+    kind: trait_declaration
+    pattern: $CONTEXT

@@ -1,0 +1,58 @@
+name: OpenAPI Spec Check
+
+on:
+  pull_request:
+    paths:
+      - 'lsproxy/src/**/*.rs'
+      - 'openapi.json'
+
+jobs:
+  check-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      - name: Build Base Docker Image
+        uses: docker/build-push-action@v2
+        with:
+          context: ./lsproxy
+          file: ./release/Dockerfile
+          load: true
+          tags: lsproxy-release
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Generate fresh OpenAPI spec
+        run: |
+          mkdir -p temp_spec
+
+          # Run the application to generate the OpenAPI spec
+          docker run --name temp_box lsproxy-release lsproxy -w
+
+          # Copy the generated OpenAPI spec from the container to the host
+          docker cp temp_box:/openapi.json temp_spec/openapi.json
+
+          # Remove the temporary container
+          docker rm temp_box
+
+      - name: Compare specs
+        run: |
+          if ! diff -u openapi.json temp_spec/openapi.json; then
+            echo "::error::OpenAPI spec is out of sync with code! Please run ./scripts/generate_spec.sh"
+            echo "::error::See diff above for details"
+            exit 1
+          fi

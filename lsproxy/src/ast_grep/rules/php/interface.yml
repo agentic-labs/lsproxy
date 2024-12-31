@@ -1,0 +1,8 @@
+id: interface
+language: php
+rule:
+  kind: name
+  pattern: $NAME
+  inside:
+    kind: interface_declaration
+    pattern: $CONTEXT

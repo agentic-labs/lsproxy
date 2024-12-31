@@ -13,12 +13,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate script version
+      - name: Validate install script version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           SCRIPT_VERSION=$(grep "LSPROXY_VERSION=" release/install-lsproxy.sh | cut -d'"' -f2)
           if [ "$VERSION" != "$SCRIPT_VERSION" ]; then
             echo "Error: Script version ($SCRIPT_VERSION) does not match release tag ($VERSION)"
+            exit 1
+          fi
+
+      - name: Validate Cargo.toml version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          CARGO_VERSION=$(grep '^version = ' lsproxy/Cargo.toml | cut -d'"' -f2)
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Cargo.toml version ($CARGO_VERSION) does not match release tag ($VERSION)"
             exit 1
           fi
 
@@ -70,11 +79,11 @@ jobs:
           # Extract AMD64 binary
           docker pull agenticlabs/lsproxy:${VERSION}
           docker create --name amd64-container --platform linux/amd64 agenticlabs/lsproxy:${VERSION}
-          docker cp amd64-container:/lsproxy release-binaries/lsproxy-${VERSION}-linux-amd64
+          docker cp amd64-container:/usr/local/bin/lsproxy-bin release-binaries/lsproxy-${VERSION}-linux-amd64
           docker rm amd64-container
           # Extract ARM64 binary
           docker create --name arm64-container --platform linux/arm64 agenticlabs/lsproxy:${VERSION}
-          docker cp arm64-container:/lsproxy release-binaries/lsproxy-${VERSION}-linux-arm64
+          docker cp arm64-container:/usr/local/bin/lsproxy-bin release-binaries/lsproxy-${VERSION}-linux-arm64
           docker rm arm64-container
           chmod +x release-binaries/*
 

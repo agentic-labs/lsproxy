@@ -41,8 +41,10 @@ pub const TYPESCRIPT_AND_JAVASCRIPT_ROOT_FILES: &[&str] =
 
 pub const TYPESCRIPT_AND_JAVASCRIPT_FILE_PATTERNS: &[&str] =
     &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
-pub const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx"];
-pub const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "jsx"];
+pub const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts"];
+pub const TYPESCRIPTREACT_EXTENSIONS: &[&str] = &["tsx"]; 
+pub const JAVASCRIPT_EXTENSIONS: &[&str] = &["js"];
+pub const JAVASCRIPTREACT_EXTENSIONS: &[&str] = &["jsx"];
 pub const TYPESCRIPT_AND_JAVASCRIPT_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
 
 pub const RUST_ROOT_FILES: &[&str] = &["Cargo.toml"];
@@ -70,6 +72,29 @@ pub const C_AND_CPP_EXTENSIONS: &[&str] = &["cpp", "cc", "c", "cxx", "h", "hpp",
 pub const JAVA_ROOT_FILES: &[&str] = &["gradlew", ".git", "mvnw"];
 pub const JAVA_FILE_PATTERNS: &[&str] = &["**/*.java"];
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
+
+pub const GOLANG_ROOT_FILES: &[&str] = &["go.mod", "go.work"];
+pub const GOLANG_FILE_PATTERNS: &[&str] = &["**/*.go", "**/*.gomod", "**/*.gowork", "**/*.gotmpl"];
+pub const GOLANG_EXTENSIONS: &[&str] = &["go"];
+
+pub const PHP_ROOT_FILES: &[&str] = &[
+    "composer.json",
+    "composer.lock",
+    "phpunit.xml",
+    "artisan",
+    ".env",
+    "index.php",
+    "wp-config.php",
+];
+pub const PHP_FILE_PATTERNS: &[&str] = &[
+    "**/*.php",
+    "**/*.phtml",
+    "**/*.phps",
+    "**/*.php5",
+    "**/*.php7",
+    "**/*.php8",
+];
+pub const PHP_EXTENSIONS: &[&str] = &["php", "phtml", "phps", "php5", "php7", "php8"];
 
 #[derive(Clone, PartialEq)]
 pub enum DidOpenConfiguration {

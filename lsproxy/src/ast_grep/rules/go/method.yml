@@ -2,6 +2,8 @@ id: method
 language: go
 rule:
   kind: field_identifier
+  pattern: $NAME
   inside:
     kind: method_declaration
-    name: name
+    field: name
+    pattern: $CONTEXT

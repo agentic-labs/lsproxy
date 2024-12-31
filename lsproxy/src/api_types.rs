@@ -3,6 +3,7 @@ use lsp_types::{GotoDefinitionResponse, Location, LocationLink};
 use serde::{Deserialize, Serialize};
 use serde_json::{to_value, Value};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
@@ -49,6 +50,13 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+    pub languages: HashMap<SupportedLanguages, bool>,
+}
+
 #[derive(
     Debug, EnumString, Display, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema,
 )]
@@ -65,6 +73,10 @@ pub enum SupportedLanguages {
     CPP,
     #[serde(rename = "java")]
     Java,
+    #[serde(rename = "golang")]
+    Golang,
+    #[serde(rename = "php")]
+    PHP,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]

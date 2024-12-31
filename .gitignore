@@ -36,3 +36,4 @@ compile_commands.json
 **/jdt.ls-java-project/**
 .project
 .classpath
+.env

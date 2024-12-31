@@ -1,0 +1,8 @@
+id: function
+language: php
+rule:
+  kind: name
+  pattern: $NAME
+  inside:
+    kind: function_definition
+    pattern: $CONTEXT

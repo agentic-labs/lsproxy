@@ -49,7 +49,8 @@ impl Process for ProcessHandler {
 
             let line = String::from_utf8_lossy(&buffer[buffer.len() - n..]);
             if line.trim().is_empty() && content_length.is_some() {
-                let length = content_length.unwrap();
+                let length =
+                    content_length.ok_or("Missing Content-Length header in LSP message")?;
                 let mut content = vec![0; length];
                 stdout.read_exact(&mut content).await?;
                 return Ok(String::from_utf8(content)?);

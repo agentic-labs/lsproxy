@@ -7,7 +7,7 @@ use log::{error, info, warn};
 
 use crate::api_types::{DefinitionResponse, GetDefinitionRequest};
 use crate::AppState;
-use lsp_types::{GotoDefinitionResponse, Location, Position as LspPosition};
+use lsp_types::{GotoDefinitionResponse, Location, Position as LspPosition, Range};
 /// Get the definition of a symbol at a specific position in a file
 ///
 /// Returns the location of the definition for the symbol at the given position.
@@ -47,18 +47,17 @@ pub async fn find_definition(
         info.position.path, info.position.position.line, info.position.position.character
     );
 
-    let manager = data
-        .manager
-        .lock()
-        .map_err(|e| {
+    let manager = match data.manager.lock() {
+        Ok(manager) => manager,
+        Err(e) => {
             error!("Failed to lock manager: {:?}", e);
-            HttpResponse::InternalServerError().json(ErrorResponse {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to lock manager: {}", e),
-            })
-        })
-        .unwrap();
+            });
+        }
+    };
 
-    let definitions = manager
+    let definitions = match manager
         .find_definition(
             &info.position.path,
             LspPosition {
@@ -67,13 +66,15 @@ pub async fn find_definition(
             },
         )
         .await
-        .map_err(|e| {
+    {
+        Ok(definitions) => definitions,
+        Err(e) => {
             error!("Definition error: {:?}", e);
-            HttpResponse::InternalServerError().json(ErrorResponse {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Definition retrieval failed: {}", e),
-            })
-        })
-        .unwrap();
+            });
+        }
+    };
 
     let source_code_context = if info.include_source_code {
         match fetch_definition_source_code(&manager, &definitions).await {
@@ -116,33 +117,55 @@ async fn fetch_definition_source_code(
                 && s.range.start.column as u32 == definition.range.start.character
         });
 
-        let source_code = match symbol {
-            Some(symbol) => symbol.get_source_code(),
-            None => {
-                warn!("Symbol not found for definition: {:?}", definition);
-                return Err(LspManagerError::InternalError(format!(
-                    "Symbol not found for definition at {:?}",
-                    definition
-                )));
-            }
-        };
-
-        if let Some(symbol) = symbol {
-            code_contexts.push(CodeContext {
+        let source_code_context = match symbol {
+            Some(symbol) => CodeContext {
                 range: FileRange {
                     path: relative_path,
                     start: Position {
-                        line: symbol.range.start.line as u32,
-                        character: symbol.range.start.column as u32,
+                        line: symbol.meta_variables.single.context.range.start.line as u32,
+                        character: symbol.meta_variables.single.context.range.start.column as u32,
                     },
                     end: Position {
-                        line: symbol.range.end.line as u32,
-                        character: symbol.range.end.column as u32,
+                        line: symbol.meta_variables.single.context.range.end.line as u32,
+                        character: symbol.meta_variables.single.context.range.end.column as u32,
                     },
                 },
-                source_code,
-            });
-        }
+                source_code: symbol.get_source_code(),
+            },
+            None => {
+                warn!("Symbol not found for definition: {:?}", definition);
+                warn!("No exact match in file symbols (likely filtered out). Returning an approximate range instead.");
+                let range = Range {
+                    start: LspPosition {
+                        line: definition.range.start.line.saturating_sub(3),
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: definition.range.end.line as u32 + 3,
+                        character: 0,
+                    },
+                };
+                let source_code = manager
+                    .read_source_code(&relative_path, Some(range))
+                    .await?;
+                CodeContext {
+                    range: FileRange {
+                        path: relative_path,
+                        start: Position {
+                            line: definition.range.start.line.saturating_sub(3),
+                            character: 0,
+                        },
+                        end: Position {
+                            line: definition.range.end.line as u32 + 3,
+                            character: 0,
+                        },
+                    },
+                    source_code,
+                }
+            }
+        };
+
+        code_contexts.push(source_code_context);
     }
     Ok(code_contexts)
 }
@@ -170,7 +193,7 @@ mod test {
                     character: 18,
                 },
             },
-            include_source_code: false,
+            include_source_code: true,
             include_raw_response: false,
         });
 
@@ -195,10 +218,23 @@ mod test {
                     character: 6,
                 },
             }],
-            source_code_context: None,
+            source_code_context: Some(vec![CodeContext {
+                range: FileRange {
+                    path: String::from("graph.py"),
+                    start: Position {
+                        line: 1,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 60,
+                        character: 40,
+                    },
+                },
+                source_code: String::from("class AStarGraph(object):\n    # Define a class board like grid with two barriers\n\n    def __init__(self):\n        self.barriers = []\n        self.barriers.append(\n            [\n                (2, 4),\n                (2, 5),\n                (2, 6),\n                (3, 6),\n                (4, 6),\n                (5, 6),\n                (5, 5),\n                (5, 4),\n                (5, 3),\n                (5, 2),\n                (4, 2),\n                (3, 2),\n            ]\n        )\n\n    @property\n    def barriers(self):\n        return self.barriers\n\n    def heuristic(self, start, goal):\n        # Use Chebyshev distance heuristic if we can move one square either\n        # adjacent or diagonal\n        D = 1\n        D2 = 1\n        dx = abs(start[0] - goal[0])\n        dy = abs(start[1] - goal[1])\n        return D * (dx + dy) + (D2 - 2 * D) * min(dx, dy)\n\n    def get_vertex_neighbours(self, pos):\n        n = []\n        # Moves allow link a chess king\n        for dx, dy in [\n            (1, 0),\n            (-1, 0),\n            (0, 1),\n            (0, -1),\n            (1, 1),\n            (-1, 1),\n            (1, -1),\n            (-1, -1),\n        ]:\n            x2 = pos[0] + dx\n            y2 = pos[1] + dy\n            if x2 < 0 or x2 > 7 or y2 < 0 or y2 > 7:\n                continue\n            n.append((x2, y2))\n        return n\n\n    def move_cost(self, a, b):\n        for barrier in self.barriers:\n            if b in barrier:\n                return 100  # Extremely high cost to enter barrier squares\n        return 1  # Normal movement cost"),
+            }]),
         };
 
-        assert_eq!(expected_response, definition_response);
+        assert_eq!(definition_response, expected_response);
         Ok(())
     }
 }

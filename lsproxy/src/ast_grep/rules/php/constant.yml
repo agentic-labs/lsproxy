@@ -1,0 +1,10 @@
+id: constant
+language: php
+rule:
+  kind: name
+  pattern: $NAME
+  inside:
+    kind: const_element
+    inside:
+      kind: const_declaration
+      pattern: $CONTEXT

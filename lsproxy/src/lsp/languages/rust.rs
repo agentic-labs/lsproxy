@@ -43,22 +43,25 @@ impl LspClient for RustAnalyzerClient {
         capabilities
     }
 
-    async fn get_initialize_params(&mut self, root_path: String) -> InitializeParams {
-        InitializeParams {
+    async fn get_initialize_params(
+        &mut self,
+        root_path: String,
+    ) -> Result<InitializeParams, Box<dyn Error + Send + Sync>> {
+        Ok(InitializeParams {
             capabilities: self.get_capabilities(),
             workspace_folders: Some(
                 self.find_workspace_folders(root_path.clone())
                     .await
                     .unwrap(),
             ),
-            root_uri: Some(Url::from_file_path(&root_path).unwrap()),
+            root_uri: Some(Url::from_file_path(&root_path).map_err(|_| "Invalid root path")?),
             initialization_options: Some(serde_json::json!({
                 "cargo": {
                     "sysroot": serde_json::Value::Null
                 }
             })),
             ..Default::default()
-        }
+        })
     }
 
     fn get_process(&mut self) -> &mut ProcessHandler {

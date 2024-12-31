@@ -19,6 +19,8 @@ It supports [multiple languages](#supported-languages) and resolves relationship
 
 `lsproxy` runs [Language Servers](https://microsoft.github.io/language-server-protocol/) and [ast-grep](https://github.com/ast-grep/ast-grep) under the hood, giving you precise search results without the headache of configuring and integrating language-specific tooling.
 
+For more info, please refer to our [API Reference](https://docs.lsproxy.dev/api-reference).
+
 [![](https://mermaid.ink/img/pako:eNptUtFumzAU_RV0q0qdRKpAgAAPk6buZVInTau0h9ZV5YRrYhVsZJuuLMq_7xraNLQ1D9jnnHt8ru09bHWFUIJo9N_tjhsXXP9miqmAhqfuLhhc0X_DLTL4cu-5ibX9pja825FMOS4VmjsGje2Mfh4Y3E8iP55007ej0Z9xNtm8slRBdddc1T2vMbhB84TGzgx4TQpu3aI22M2ZThL17dePTzYMFouv3v1TnNezBBPWydM95xiq6tj40D5I9SBkg75jaZ2HNrqxgVSBh49pKhSWNEKq6kXjIamkk1odVeajiiA0qLY4ncTpjVCugMFP3SvHYAw59TUpKPCInYScEz7SHDEjMmHn54F1Q4Nvl-obasozzMRKiNA6ox-xPEt4scT4Xc1O01FMcpH6771nI1E5-yYRIoUQWjQtlxU9wr0vYOB26F9JSdOKm0cGTB1Ix3unbwa1hdKZHkPou4o7_C45PcMWSsEbS2jH1a3W7auIllDu4RnKJLtM0yJL82hdJKs4zUIYoIyj5WWeJlGyzKNslefr5BDCv9GAiCKOi6yIlnGeFkmxPvwHnPP5bQ?type=png)](https://mermaid.live/edit#pako:eNptUtFumzAU_RV0q0qdRKpAgAAPk6buZVInTau0h9ZV5YRrYhVsZJuuLMq_7xraNLQ1D9jnnHt8ru09bHWFUIJo9N_tjhsXXP9miqmAhqfuLhhc0X_DLTL4cu-5ibX9pja825FMOS4VmjsGje2Mfh4Y3E8iP55007ej0Z9xNtm8slRBdddc1T2vMbhB84TGzgx4TQpu3aI22M2ZThL17dePTzYMFouv3v1TnNezBBPWydM95xiq6tj40D5I9SBkg75jaZ2HNrqxgVSBh49pKhSWNEKq6kXjIamkk1odVeajiiA0qLY4ncTpjVCugMFP3SvHYAw59TUpKPCInYScEz7SHDEjMmHn54F1Q4Nvl-obasozzMRKiNA6ox-xPEt4scT4Xc1O01FMcpH6771nI1E5-yYRIoUQWjQtlxU9wr0vYOB26F9JSdOKm0cGTB1Ix3unbwa1hdKZHkPou4o7_C45PcMWSsEbS2jH1a3W7auIllDu4RnKJLtM0yJL82hdJKs4zUIYoIyj5WWeJlGyzKNslefr5BDCv9GAiCKOi6yIlnGeFkmxPvwHnPP5bQ)
 
 ## Key Features
@@ -44,9 +46,10 @@ pip install lsproxy-sdk
 You can find the source for the SDK [here](https://github.com/agentic-labs/lsproxy-python-sdk)
 
 ### Run a container or add to compose
-Make sure your `WORKSPACE_PATH` is an absolute path, otherwise docker will complain.
+> :warning: Version 0.2.0 and newer: JWT authentication is enabled by default for endpoints. Set the JWT_SECRET variable to configure or set USE_AUTH=false to turn off.
+
 ```bash
-docker run -p 4444:4444 -v $WORKSPACE_PATH:/mnt/workspace agenticlabs/lsproxy
+docker run -p 4444:4444 -v $WORKSPACE_PATH:/mnt/workspace -e USE_AUTH=false agenticlabs/lsproxy
 ```
 
 ```dockerfile
@@ -55,6 +58,8 @@ services:
     image: agenticlabs/lsproxy
     ports:
       - "4444:4444"
+    environment:
+      - JWT_SECRET=shared_secret
     volumes:
       - ${WORKSPACE_PATH}:/mnt/workspace
 ```
@@ -103,10 +108,12 @@ We're building a community. Come hang out with us!
 We're looking to add new language support or better language servers so let us know what you need!
 |Language|Server|URL|
 |:-|:-|:-|
+|C/C++|`clangd`|https://clangd.llvm.org/|
+|Golang|`gopls`|https://github.com/golang/tools/tree/master/gopls|
+|Java|`jdtls`|https://github.com/eclipse-jdtls/eclipse.jdt.ls|
 |Javascript|`typescript-language-server`|https://github.com/typescript-language-server/typescript-language-server|
+|PHP|`phpactor`|https://github.com/phpactor/phpactor|
 |Python|`jedi-language-server`|https://github.com/pappasam/jedi-language-server|
 |Rust|`rust-analyzer`|https://github.com/rust-lang/rust-analyzer|
 |Typescript|`typescript-language-server`|https://github.com/typescript-language-server/typescript-language-server|
-|C/C++|`clangd`|https://clangd.llvm.org/|
-|Java|`jdtls`|https://github.com/eclipse-jdtls/eclipse.jdt.ls|
 |Your Favorite Language | Awesome Language Server | https://github.com/agentic-labs/lsproxy/issues/new |

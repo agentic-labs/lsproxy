@@ -1,0 +1,12 @@
+id: property
+language: php
+rule:
+  kind: name
+  pattern: $NAME
+  inside:
+    kind: variable_name
+    inside:
+      kind: property_element
+      inside:
+        kind: property_declaration
+        pattern: $CONTEXT

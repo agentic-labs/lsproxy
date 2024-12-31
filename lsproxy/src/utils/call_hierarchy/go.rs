@@ -15,10 +15,25 @@ impl LanguageCallHierarchy for GoCallHierarchy {
           function: (selector_expression
             field: (field_identifier) @func_name)) @call
 
-        ; Function calls through package
+        ; Function calls through package (including standard library)
         (call_expression
           function: (selector_expression
             operand: (identifier) @pkg_name
+            field: (field_identifier) @func_name)) @call
+
+        ; Type-asserted function calls
+        (type_assertion_expression
+          operand: (call_expression
+            function: (selector_expression
+              operand: (identifier) @pkg_name
+              field: (field_identifier) @func_name)) @call) @type_assertion
+
+        ; Chained method calls
+        (call_expression
+          function: (selector_expression
+            operand: (selector_expression
+              operand: (identifier) @pkg_name
+              field: (field_identifier) @method_name)
             field: (field_identifier) @func_name)) @call
         "#
     }
@@ -29,17 +44,25 @@ impl LanguageCallHierarchy for GoCallHierarchy {
         (function_declaration
           name: (identifier) @func_name) @func_decl
 
-        ; Method declarations
+        ; Method declarations with receiver
         (method_declaration
           name: (field_identifier) @func_name
-          receiver: (parameter_list) @receiver) @func_decl
+          receiver: (parameter_list
+            (parameter_declaration
+              type: [(type_identifier) @receiver_type
+                    (pointer_type type: (type_identifier) @receiver_type)])) @receiver) @func_decl
+
+        ; Interface method declarations
+        (method_spec
+          name: (field_identifier) @func_name) @func_decl
         "#
     }
 
     fn is_function_type(&self, node_type: &str) -> bool {
         matches!(
             node_type,
-            "function_declaration" | "method_declaration"
+            "function_declaration" | "method_declaration" | "method_spec" |
+            "call_expression" | "type_assertion_expression"
         )
     }
 

@@ -4,26 +4,13 @@ package golang_astar
 
 import "container/heap"
 
-// Exported node type.
-type Node interface {
-	To() []Arc               // return list of arcs from this node to another
-	Heuristic(from Node) int // heuristic cost from another node to this one
-}
-
-// An Arc, actually a "half arc", leads to another node with integer cost.
-type Arc struct {
-	To   Node
-	Cost int
-}
-
-// rNode holds data for a "reached" node
 type rNode struct {
 	n    Node
 	from Node
-	l    int // route len
-	g    int // route cost
-	f    int // "g+h", route cost + heuristic estimate
-	fx   int // heap.Fix index
+	l    int  // route len
+	g    Cost // route cost
+	f    Cost // "g+h", route cost + heuristic estimate
+	fx   int  // heap.Fix index
 }
 
 type openHeap []*rNode // priority queue
@@ -36,7 +23,7 @@ type openHeap []*rNode // priority queue
 // will be optimal.
 func Route(start, end Node) (route []Node, cost int) {
 	// start node initialized with heuristic
-	cr := &rNode{n: start, l: 1, f: end.Heuristic(start)}
+	cr := &rNode{n: start, l: 1, f: Cost(end.Heuristic(start))}
 	// maintain a set of reached nodes.  start is reached initially
 	r := map[Node]*rNode{start: cr}
 	// oh is a heap of nodes "open" for exploration.  nodes go on the heap
@@ -48,7 +35,7 @@ func Route(start, end Node) (route []Node, cost int) {
 		bestNode := bestRoute.n
 		if bestNode == end {
 			// done.  prepare return values
-			cost = bestRoute.g
+			cost = int(bestRoute.g)
 			route = make([]Node, bestRoute.l)
 			for i := len(route) - 1; i >= 0; i-- {
 				route[i] = bestRoute.n
@@ -63,7 +50,7 @@ func Route(start, end Node) (route []Node, cost int) {
 			if alt, ok := r[to.To]; !ok {
 				// alt being reached for the first time
 				alt = &rNode{n: to.To, from: bestNode, l: l,
-					g: g, f: g + end.Heuristic(to.To)}
+					g: g, f: g + Cost(end.Heuristic(to.To))}
 				r[to.To] = alt
 				heap.Push(&oh, alt)
 			} else {
@@ -75,7 +62,7 @@ func Route(start, end Node) (route []Node, cost int) {
 				alt.from = bestNode
 				alt.l = l
 				alt.g = g
-				alt.f = end.Heuristic(alt.n)
+				alt.f = g + Cost(end.Heuristic(alt.n))
 				if alt.fx < 0 {
 					heap.Push(&oh, alt)
 				} else {

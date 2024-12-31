@@ -49,7 +49,16 @@ pub async fn find_references(
         info.identifier_position.position.line,
         info.identifier_position.position.character
     );
-    let manager = data.manager.lock().unwrap();
+
+    let manager = match data.manager.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!("Failed to acquire manager lock: {}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: "Internal server error: failed to acquire lock".to_string(),
+            });
+        }
+    };
 
     let references_result = manager
         .find_references(
@@ -222,15 +231,17 @@ mod test {
         let response = find_references(state, mock_request).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("content-type").unwrap(),
-            "application/json"
-        );
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .ok_or("Missing content-type header")?
+            .to_str()?;
+        assert_eq!(content_type, "application/json");
 
         // Check the body
         let body = response.into_body();
-        let bytes = actix_web::body::to_bytes(body).await.unwrap();
-        let reference_response: ReferencesResponse = serde_json::from_slice(&bytes).unwrap();
+        let bytes = actix_web::body::to_bytes(body).await?;
+        let reference_response: ReferencesResponse = serde_json::from_slice(&bytes)?;
 
         let expected_response = ReferencesResponse {
             raw_response: None,
@@ -286,15 +297,17 @@ mod test {
         let response = find_references(state, mock_request).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("content-type").unwrap(),
-            "application/json"
-        );
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .ok_or("Missing content-type header")?
+            .to_str()?;
+        assert_eq!(content_type, "application/json");
 
         // Check the body
         let body = response.into_body();
-        let bytes = actix_web::body::to_bytes(body).await.unwrap();
-        let reference_response: ReferencesResponse = serde_json::from_slice(&bytes).unwrap();
+        let bytes = actix_web::body::to_bytes(body).await?;
+        let reference_response: ReferencesResponse = serde_json::from_slice(&bytes)?;
 
         let expected_response = ReferencesResponse {
             raw_response: None,

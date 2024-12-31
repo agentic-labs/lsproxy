@@ -22,7 +22,15 @@ use crate::AppState;
     )
 )]
 pub async fn list_files(data: Data<AppState>) -> HttpResponse {
-    let manager = data.manager.lock().unwrap();
+    let manager = match data.manager.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!("Failed to acquire manager lock: {}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: "Internal server error: failed to acquire lock".to_string(),
+            });
+        }
+    };
     let files = manager.list_files().await;
     match files {
         Ok(files) => HttpResponse::Ok().json(files),

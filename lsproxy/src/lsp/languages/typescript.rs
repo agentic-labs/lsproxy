@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -47,18 +48,21 @@ impl LspClient for TypeScriptLanguageClient {
         &mut self.workspace_documents
     }
 
-    async fn get_initialize_params(&mut self, root_path: String) -> InitializeParams {
+    async fn get_initialize_params(
+        &mut self,
+        root_path: String,
+    ) -> Result<InitializeParams, Box<dyn Error + Send + Sync>> {
         let capabilities = self.get_capabilities();
-        InitializeParams {
+        Ok(InitializeParams {
             capabilities,
-            root_uri: Some(Url::from_file_path(root_path).unwrap()),
+            root_uri: Some(Url::from_file_path(root_path).map_err(|_| "Invalid root path")?),
             initialization_options: Some(serde_json::json!({
                 "tsserver": {
                     "useSyntaxServer": "never"
                 }
             })),
             ..Default::default()
-        }
+        })
     }
 }
 

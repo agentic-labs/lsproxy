@@ -81,16 +81,19 @@ impl LspClient for ClangdClient {
         Ok(())
     }
 
-    async fn get_initialize_params(&mut self, root_path: String) -> InitializeParams {
+    async fn get_initialize_params(
+        &mut self,
+        root_path: String,
+    ) -> Result<InitializeParams, Box<dyn Error + Send + Sync>> {
         let capabilities = self.get_capabilities();
-        InitializeParams {
+        Ok(InitializeParams {
             capabilities,
-            root_uri: Some(Url::from_file_path(root_path).unwrap()),
+            root_uri: Some(Url::from_file_path(&root_path).map_err(|_| "Invalid root path")?),
             initialization_options: Some(serde_json::json!({
                 "clangdFileStatus": true, // TODO: actually wait for the status when hitting a file
             })),
             ..Default::default()
-        }
+        })
     }
 
     async fn text_document_did_open(

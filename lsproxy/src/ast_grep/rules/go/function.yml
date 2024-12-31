@@ -2,6 +2,8 @@ id: function
 language: go
 rule:
   kind: identifier
+  pattern: $NAME
   inside:
     kind: function_declaration
-    name: name
+    field: name
+    pattern: $CONTEXT

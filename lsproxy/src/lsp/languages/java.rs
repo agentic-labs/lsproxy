@@ -50,7 +50,7 @@ impl LspClient for JdtlsClient {
         debug!("Initializing LSP client with root path: {:?}", root_path);
         self.start_response_listener().await?;
 
-        let params = self.get_initialize_params(root_path).await;
+        let params = self.get_initialize_params(root_path).await?;
 
         let result = self
             .send_request("initialize", Some(serde_json::to_value(params)?))

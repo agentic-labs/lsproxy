@@ -9,7 +9,7 @@ RUN cargo build --release
 
 FROM rust:1.81.0-slim-bookworm
 
-# Install runtime dependencies, Python, Node.js, and npm
+# Install runtime dependencies, Python, Node.js, PHP, and npm
 RUN apt-get update && apt-get install \
     -y --no-install-recommends \
     pkg-config \
@@ -24,10 +24,26 @@ RUN apt-get update && apt-get install \
     build-essential \
     gcc \
     g++ \
+    php \
+    php-xml \
+    php-mbstring \
+    php-curl \
+    php-zip \
+    unzip \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Install PHPActor
+RUN mkdir -p /usr/local/share/phpactor && \
+    cd /usr/local/share/phpactor && \
+    curl -L https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar -o phpactor && \
+    chmod +x phpactor && \
+    ln -s /usr/local/share/phpactor/phpactor /usr/local/bin/phpactor
 
 # Config Python
 RUN ln -sf /usr/bin/python3 /usr/bin/python
@@ -61,8 +77,21 @@ RUN pip install jedi-language-server ast-grep-cli
 # Install global npm packages
 RUN npm install -g typescript-language-server typescript
 
-# Copy the binary
-COPY --from=builder /usr/src/app/target/release/lsproxy /usr/local/bin/lsproxy
+# Install go and Gopls
+ARG TARGETARCH
+RUN curl -O -L "https://go.dev/dl/go1.21.4.linux-${TARGETARCH}.tar.gz" && \
+    tar -C /usr/local -xzf go1.21.4.linux-${TARGETARCH}.tar.gz && \
+    rm go1.21.4.linux-${TARGETARCH}.tar.gz && \
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@latest && \
+    cp ~/go/bin/gopls /usr/local/bin/gopls
+
+ENV HOME=/home/user
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/home/user/go
+ENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+
+# Copy binary with -bin suffix
+COPY --from=builder /usr/src/app/target/release/lsproxy /usr/local/bin/lsproxy-bin
 
 # Copy ast-grep rules
 COPY ./src/ast_grep /usr/src/ast_grep
@@ -70,4 +99,16 @@ COPY ./src/ast_grep /usr/src/ast_grep
 EXPOSE 4444
 ENV RUST_LOG=info
 ENV RA_LOG="/tmp/rust-analyzer.log"
+
+RUN mkdir -p /mnt/workspace /usr/local/cargo /usr/src/app /usr/local/go /home/user/go \
+    && chown -R 1000:1000 /mnt/workspace /usr/local/cargo /usr/src/app /usr/local/go /home/user /usr/local/bin
+
+# Create the wrapper script with all current env vars
+RUN echo '#!/bin/bash' > /usr/local/bin/lsproxy \
+    && env | while read -r line; do \
+    echo "export $line" >> /usr/local/bin/lsproxy; \
+    done \
+    && echo 'exec /usr/local/bin/lsproxy-bin "$@"' >> /usr/local/bin/lsproxy \
+    && chmod +x /usr/local/bin/lsproxy
+
 CMD ["lsproxy"]

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-LSPROXY_VERSION="0.1.11"
+LSPROXY_VERSION="0.2.4"
 
 # Function to detect architecture
 detect_arch() {
@@ -86,6 +86,28 @@ install_java() {
     echo 'export PATH="/opt/jdtls/bin:${PATH}"' >> /etc/profile.d/jdtls.sh
 }
 
+# Function to install PHP and related tools
+install_php() {
+    echo "Installing PHP and related tools..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        php \
+        php-xml \
+        php-mbstring \
+        php-curl \
+        php-zip \
+        unzip
+
+    # Install Composer
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+    # Install PHPActor
+    mkdir -p /usr/local/share/phpactor
+    cd /usr/local/share/phpactor
+    curl -L https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar -o phpactor
+    chmod +x phpactor
+    ln -s /usr/local/share/phpactor/phpactor /usr/local/bin/phpactor
+}
+
 # Function to install Node.js dependencies
 install_node_deps() {
     echo "Installing Node.js dependencies..."
@@ -99,6 +121,29 @@ install_rust_tools() {
     . $HOME/.cargo/env
     rustup component add rust-analyzer
     rustup component add rustfmt
+}
+
+# Function to install Go and Gopls
+install_go() {
+    echo "Installing Go and Gopls..."
+    local arch=$(detect_arch)
+    curl -O -L "https://go.dev/dl/go1.21.4.linux-${arch}.tar.gz"
+    tar -C /usr/local -xzf go1.21.4.linux-${arch}.tar.gz
+    rm go1.21.4.linux-${arch}.tar.gz
+
+    # Install Gopls
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@latest
+    cp ~/go/bin/gopls /usr/local/bin/gopls
+
+    # Set up Go environment
+    export GOROOT=/usr/local/go
+    export GOPATH=/home/user/go
+    export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+
+    # Add Go environment to profile
+    echo 'export GOROOT=/usr/local/go' >> /etc/profile.d/go.sh
+    echo 'export GOPATH=/home/user/go' >> /etc/profile.d/go.sh
+    echo 'export PATH=$GOPATH/bin:$GOROOT/bin:$PATH' >> /etc/profile.d/go.sh
 }
 
 # Function to download and install LSProxy binary
@@ -141,8 +186,10 @@ main() {
     install_python
     install_nodejs
     install_java
+    install_php
     install_node_deps
     install_rust_tools
+    install_go
     install_lsproxy
     install_ast_grep_config
     cleanup

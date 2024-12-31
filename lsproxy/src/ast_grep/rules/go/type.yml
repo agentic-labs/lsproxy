@@ -2,7 +2,8 @@ id: type
 language: go
 rule:
   kind: type_identifier
+  pattern: $NAME
   inside:
     kind: type_spec
     field: name
-    pattern: $CODE
+    pattern: $CONTEXT
