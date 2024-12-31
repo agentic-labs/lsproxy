@@ -96,7 +96,7 @@ pub const PHP_FILE_PATTERNS: &[&str] = &[
 ];
 pub const PHP_EXTENSIONS: &[&str] = &["php", "phtml", "phps", "php5", "php7", "php8"];
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum DidOpenConfiguration {
     Lazy,
     None,

@@ -62,7 +62,14 @@ pub trait LspClient: Send {
             .send_request("initialize", Some(serde_json::to_value(params)?))
             .await?;
         let init_result: InitializeResult = serde_json::from_value(result)?;
-        debug!("Initialization successful: {:?}", init_result);
+        debug!("Initialization successful. Server capabilities: {:#?}", init_result.capabilities);
+        
+        // Specifically log call hierarchy support
+        if let Some(call_hierarchy) = init_result.capabilities.call_hierarchy_provider {
+            debug!("Server supports call hierarchy: {:#?}", call_hierarchy);
+        } else {
+            debug!("Server does not advertise call hierarchy support");
+        }
         self.send_initialized().await?;
         Ok(init_result)
     }
@@ -388,25 +395,75 @@ pub trait LspClient: Send {
         position: Position,
         use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyItem>, Box<dyn Error + Send + Sync>> {
+        debug!(
+            "prepare_call_hierarchy: Starting with file={}, position={:?}, manual={}",
+            file_path, position, use_manual_hierarchy
+        );
+        
         if !use_manual_hierarchy {
-            // Try LSP server implementation first
+            debug!("prepare_call_hierarchy: Using LSP server implementation");
             let needs_open = {
                 let workspace_documents = self.get_workspace_documents();
-                workspace_documents.get_did_open_configuration() == DidOpenConfiguration::Lazy
-                    && !workspace_documents.is_did_open_document(file_path)
+                let config = workspace_documents.get_did_open_configuration();
+                let is_open = workspace_documents.is_did_open_document(file_path);
+                debug!(
+                    "prepare_call_hierarchy: Document status - config={:?}, is_open={}",
+                    config, is_open
+                );
+                config == DidOpenConfiguration::Lazy && !is_open
             };
 
+            // Always read the document text for diagnostics
+            let document_text = self
+                .get_workspace_documents()
+                .read_text_document(&PathBuf::from(file_path), None)
+                .await?;
+
+            // For Go, if we're on a method call (x.y), adjust position to the method name
+            let lines: Vec<&str> = document_text.lines().collect();
+            let adjusted_position = if let Some(line) = lines.get(position.line as usize) {
+                let before_cursor = &line[..position.character as usize];
+                if let Some(dot_pos) = before_cursor.rfind('.') {
+                    // We're after a dot, use the position right after the dot
+                    Position {
+                        line: position.line,
+                        character: (dot_pos + 1) as u32,
+                    }
+                } else {
+                    position
+                }
+            } else {
+                position
+            };
+
+            // Log the content around the position
+            if let Some(line) = lines.get(position.line as usize) {
+                debug!(
+                    "prepare_call_hierarchy: Content at position - Line {}: {:?}",
+                    position.line, line
+                );
+                if position.line > 0 {
+                    if let Some(prev_line) = lines.get(position.line as usize - 1) {
+                        debug!("prepare_call_hierarchy: Previous line: {:?}", prev_line);
+                    }
+                }
+                if let Some(next_line) = lines.get(position.line as usize + 1) {
+                    debug!("prepare_call_hierarchy: Next line: {:?}", next_line);
+                }
+                debug!(
+                    "prepare_call_hierarchy: Adjusted position from {:?} to {:?}",
+                    position, adjusted_position
+                );
+            }
+
             if needs_open {
-                let document_text = self
-                    .get_workspace_documents()
-                    .read_text_document(&PathBuf::from(file_path), None)
-                    .await?;
+                debug!("prepare_call_hierarchy: Opening document {}", file_path);
 
                 self.text_document_did_open(TextDocumentItem {
                     uri: Url::from_file_path(file_path).unwrap(),
                     language_id: detect_language_string(file_path)?,
                     version: 1,
-                    text: document_text,
+                    text: document_text.clone(),
                 })
                 .await?;
 
@@ -414,15 +471,58 @@ pub trait LspClient: Send {
                     .add_did_open_document(file_path);
             }
 
+            // For Go, if we're on a method call (x.y), adjust position to the method name
+            let adjusted_position = if let Some(line) = document_text.lines().nth(position.line as usize) {
+                let before_cursor = &line[..position.character as usize];
+                if let Some(dot_pos) = before_cursor.rfind('.') {
+                    // We're after a dot, use the position right after the dot
+                    Position {
+                        line: position.line,
+                        character: (dot_pos + 1) as u32,
+                    }
+                } else {
+                    position
+                }
+            } else {
+                position
+            };
+
+            debug!(
+                "prepare_call_hierarchy: Adjusted position from {:?} to {:?}",
+                position, adjusted_position
+            );
+
             let params = CallHierarchyPrepareParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier {
                         uri: Url::from_file_path(file_path).map_err(|_| "Invalid file path")?,
                     },
-                    position,
+                    position: adjusted_position,
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
             };
+
+            debug!(
+                "prepare_call_hierarchy: Sending request with params: {:?}",
+                params
+            );
+
+            // Request diagnostics for the file
+            let diagnostic_params = serde_json::json!({
+                "textDocument": {
+                    "uri": Url::from_file_path(file_path).map_err(|_| "Invalid file path")?
+                }
+            });
+            
+            if let Ok(diagnostics) = self
+                .send_request(
+                    "textDocument/diagnostic",
+                    Some(diagnostic_params),
+                )
+                .await
+            {
+                debug!("File diagnostics: {:?}", diagnostics);
+            }
 
             let result = self
                 .send_request(
@@ -430,15 +530,62 @@ pub trait LspClient: Send {
                     Some(serde_json::to_value(params)?),
                 )
                 .await?;
+                
+            debug!(
+                "prepare_call_hierarchy: Raw response from server: {:#?}",
+                result
+            );
+
+            // Get hover information for the position
+            let hover_params = serde_json::json!({
+                "textDocument": {
+                    "uri": Url::from_file_path(file_path).map_err(|_| "Invalid file path")?
+                },
+                "position": {
+                    "line": position.line,
+                    "character": position.character
+                }
+            });
+
+            if let Ok(hover_info) = self
+                .send_request(
+                    "textDocument/hover",
+                    Some(hover_params),
+                )
+                .await
+            {
+                debug!("Hover information at position: {:?}", hover_info);
+            }
 
             if result.is_null() {
+                debug!("prepare_call_hierarchy: Server returned null response");
                 Ok(vec![])
             } else {
-                let items: Vec<CallHierarchyItem> = serde_json::from_value(result)?;
-                debug!("Received call hierarchy prepare response");
-                Ok(items)
+                match serde_json::from_value::<Vec<CallHierarchyItem>>(result.clone()) {
+                    Ok(items) => {
+                        debug!(
+                            "prepare_call_hierarchy: Successfully parsed {} items from response",
+                            items.len()
+                        );
+                        for (i, item) in items.iter().enumerate() {
+                            debug!(
+                                "prepare_call_hierarchy: Item {}: name={}, kind={:?}, range={:?}",
+                                i, item.name, item.kind, item.selection_range
+                            );
+                        }
+                        Ok(items)
+                    }
+                    Err(e) => {
+                        debug!(
+                            "prepare_call_hierarchy: Failed to parse response: {}. Raw response: {:?}",
+                            e, result
+                        );
+                        Ok(vec![])
+                    }
+                }
             }
         } else {
+            debug!("prepare_call_hierarchy: Using manual implementation");
             debug!(
                 "Manually preparing call hierarchy for file: {}, position: {:?}",
                 file_path, position
