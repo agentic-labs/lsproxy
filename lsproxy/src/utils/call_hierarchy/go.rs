@@ -44,16 +44,8 @@ impl LanguageCallHierarchy for GoCallHierarchy {
         (function_declaration
           name: (identifier) @func_name) @func_decl
 
-        ; Method declarations with receiver
+        ; Method declarations
         (method_declaration
-          name: (field_identifier) @func_name
-          receiver: (parameter_list
-            (parameter_declaration
-              type: [(type_identifier) @receiver_type
-                    (pointer_type type: (type_identifier) @receiver_type)])) @receiver) @func_decl
-
-        ; Interface method declarations
-        (method_spec
           name: (field_identifier) @func_name) @func_decl
         "#
     }
@@ -61,8 +53,7 @@ impl LanguageCallHierarchy for GoCallHierarchy {
     fn is_function_type(&self, node_type: &str) -> bool {
         matches!(
             node_type,
-            "function_declaration" | "method_declaration" | "method_spec" |
-            "call_expression" | "type_assertion_expression"
+            "function_declaration" | "method_declaration" | "call_expression" | "function_definition"
         )
     }
 

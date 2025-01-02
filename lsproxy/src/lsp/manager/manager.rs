@@ -382,17 +382,70 @@ impl Manager {
         let mut locked_client = client.lock().await;
         debug!("[PrepareCallHierarchy] Client lock acquired");
 
-        // Prepare call hierarchy
-        debug!(
-            "[PrepareCallHierarchy] Requesting call hierarchy from LSP client (mode={})",
-            if use_manual_hierarchy {
-                "manual"
-            } else {
-                "lsp"
+        // First try to get the definition
+        debug!("[PrepareCallHierarchy] Getting definition at position");
+        let def_result = locked_client.text_document_definition(full_path_str, position).await
+            .map_err(|e| LspManagerError::InternalError(format!("Failed to get definition: {}", e)))?;
+
+        // If we got a definition, check if it's an import statement
+        let (actual_file, actual_position) = match def_result {
+            GotoDefinitionResponse::Array(locations) if !locations.is_empty() => {
+                let loc = &locations[0];
+                debug!("[PrepareCallHierarchy] Found definition at {:?}", loc);
+                
+                // Read the text at the definition location to check if it's an import
+                let def_text = locked_client.get_workspace_documents()
+                    .read_text_document(&PathBuf::from(loc.uri.path()), Some(loc.range))
+                    .await
+                    .map_err(|e| LspManagerError::InternalError(format!("Failed to read definition text: {}", e)))?;
+                
+                if def_text.trim_matches('"').contains('/') {
+                    // This looks like an import path, try to find the actual definition
+                    debug!("[PrepareCallHierarchy] Found import statement: {}", def_text);
+                    
+                    // Try another definition lookup at the original position but in the imported file
+                    let import_path = def_text.trim_matches('"');
+                    let pkg_root = Path::new(file_path).parent().unwrap_or(Path::new(""));
+                    let full_path = pkg_root.join(import_path);
+                    
+                    if full_path.exists() {
+                        debug!("[PrepareCallHierarchy] Found source file at: {:?}", full_path);
+                        // Try to find the actual definition in the source file
+                        let source_def = locked_client.text_document_definition(
+                            full_path.to_str().unwrap(),
+                            position
+                        ).await
+                        .map_err(|e| LspManagerError::InternalError(format!("Failed to get definition in source file: {}", e)))?;
+                        
+                        match source_def {
+                            GotoDefinitionResponse::Array(src_locs) if !src_locs.is_empty() => {
+                                let src_loc = &src_locs[0];
+                                debug!("[PrepareCallHierarchy] Found actual definition at {:?}", src_loc);
+                                (src_loc.uri.path().to_string(), src_loc.range.start)
+                            }
+                            _ => (full_path_str.to_string(), position)
+                        }
+                    } else {
+                        debug!("[PrepareCallHierarchy] Could not find source file for import path: {:?}", full_path);
+                        (full_path_str.to_string(), position)
+                    }
+                } else {
+                    debug!("[PrepareCallHierarchy] Definition is not an import statement");
+                    (loc.uri.path().to_string(), loc.range.start)
+                }
             }
+            _ => (full_path_str.to_string(), position),
+        };
+
+        // Prepare call hierarchy using the actual location
+        debug!(
+            "[PrepareCallHierarchy] Requesting call hierarchy from LSP client (mode={}) at {}:{}",
+            if use_manual_hierarchy { "manual" } else { "lsp" },
+            actual_file,
+            actual_position.line
         );
         let result = locked_client
-            .prepare_call_hierarchy(full_path_str, position, use_manual_hierarchy)
+            .prepare_call_hierarchy(&actual_file, actual_position, use_manual_hierarchy)
             .await;
 
         match &result {

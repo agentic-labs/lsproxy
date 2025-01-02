@@ -926,7 +926,7 @@ pub trait LspClient: Send {
                         found_call = true;
                         debug!("get_referenced_object: Found call expression");
                         break;
-                    } else if parent.kind() == "function_item" {
+                    } else if parent.kind() == "function_item" || parent.kind() == "function_declaration" {
                         found_function = true;
                         debug!("get_referenced_object: Found function definition");
                         break;
@@ -935,22 +935,29 @@ pub trait LspClient: Send {
                 }
 
                 if found_call || found_function {
+                    let node_to_use = if found_function {
+                        // Use the parent node for function definitions
+                        current.parent().unwrap_or(current)
+                    } else {
+                        current
+                    };
                     debug!("get_referenced_object: Creating object for {}", if found_call { "function call" } else { "function definition" });
                     Some(Object {
                         name,
                         package_path: pkg.path.clone(),
                         file_path: file_path.to_string(),
-                        range: match self.tree_sitter_to_lsp_range(&current, &source) {
+                        range: match self.tree_sitter_to_lsp_range(&node_to_use, &source) {
                             Ok(r) => r,
                             Err(_e) => return Ok(None),
                         },
-                        node_range: (current.start_byte(), current.end_byte()),
+                        node_range: (node_to_use.start_byte(), node_to_use.end_byte()),
                         source: source.clone(),
                         tree: tree.clone(),
                         is_reference: found_call,
                     })
                 } else if let Some(parent) = initial_node.parent() {
-                    if parent.kind() == "function_definition" || parent.kind() == "method_definition" || parent.kind() == "function_item" {
+                    if parent.kind() == "function_definition" || parent.kind() == "method_definition" || 
+                       parent.kind() == "function_item" || parent.kind() == "function_declaration" {
                         debug!("get_referenced_object: Found function/method definition");
                         // Use the parent node (full function) for the range and node_range
                         Some(Object {
