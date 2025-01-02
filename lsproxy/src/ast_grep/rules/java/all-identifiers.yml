@@ -1,0 +1,8 @@
+id: all-identifiers
+language: java
+rule:
+    pattern: $NAME
+    any:
+     - kind: identifier
+     - kind: type_identifier
+

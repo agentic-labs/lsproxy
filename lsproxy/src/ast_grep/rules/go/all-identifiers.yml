@@ -1,0 +1,9 @@
+id: all-identifiers
+language: go
+rule:
+    pattern: $NAME
+    any:
+     - kind: identifier
+     - kind: type_identifier
+     - kind: field_identifier
+

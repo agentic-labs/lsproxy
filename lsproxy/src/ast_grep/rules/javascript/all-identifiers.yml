@@ -1,0 +1,7 @@
+id: all-identifiers
+language: javascript
+rule:
+    pattern: $NAME
+    any:
+     - kind: identifier
+     - kind: property_identifier

@@ -1,4 +1,5 @@
 use crate::api_types::{CodeContext, ErrorResponse, FileRange, Position};
+use crate::handlers::utils;
 use crate::lsp::manager::{LspManagerError, Manager};
 use crate::utils::file_utils::uri_to_relative_path_string;
 use actix_web::web::{Data, Json};
@@ -56,6 +57,25 @@ pub async fn find_definition(
             });
         }
     };
+    let file_identifiers = match manager.get_file_identifiers(&info.position.path).await {
+        Ok(identifiers) => identifiers,
+        Err(e) => {
+            error!("Failed to get file identifiers: {:?}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get file identifiers: {}", e),
+            });
+        }
+    };
+    let identifier =
+        match utils::find_identifier_at_position(file_identifiers, &info.position).await {
+            Ok(identifier) => identifier,
+            Err(e) => {
+                error!("Failed to find definition from position: {:?}", e);
+                return HttpResponse::BadRequest().json(ErrorResponse {
+                    error: format!("Failed to find definition from position: {}", e),
+                });
+            }
+        };
 
     let definitions = match manager
         .find_definition(
@@ -88,11 +108,22 @@ pub async fn find_definition(
         None
     };
 
-    HttpResponse::Ok().json(DefinitionResponse::from((
-        definitions,
+    HttpResponse::Ok().json(DefinitionResponse {
+        raw_response: if info.include_raw_response {
+            Some(serde_json::to_value(&definitions).unwrap())
+        } else {
+            None
+        },
+        definitions: match &definitions {
+            GotoDefinitionResponse::Scalar(location) => vec![location.clone().into()],
+            GotoDefinitionResponse::Array(locations) => {
+                locations.iter().map(|l| l.clone().into()).collect()
+            }
+            GotoDefinitionResponse::Link(links) => links.iter().map(|l| l.clone().into()).collect(),
+        },
         source_code_context,
-        info.include_raw_response,
-    )))
+        selected_identifier: identifier,
+    })
 }
 
 async fn fetch_definition_source_code(
@@ -118,19 +149,19 @@ async fn fetch_definition_source_code(
         });
 
         let source_code_context = match symbol {
-            Some(symbol) => CodeContext {
+            Some(ast_grep_match) => CodeContext {
                 range: FileRange {
                     path: relative_path,
                     start: Position {
-                        line: symbol.meta_variables.single.context.range.start.line as u32,
-                        character: symbol.meta_variables.single.context.range.start.column as u32,
+                        line: ast_grep_match.get_range().start.line as u32,
+                        character: ast_grep_match.get_range().start.column as u32,
                     },
                     end: Position {
-                        line: symbol.meta_variables.single.context.range.end.line as u32,
-                        character: symbol.meta_variables.single.context.range.end.column as u32,
+                        line: ast_grep_match.get_range().end.line as u32,
+                        character: ast_grep_match.get_range().end.column as u32,
                     },
                 },
-                source_code: symbol.get_source_code(),
+                source_code: ast_grep_match.get_source_code(),
             },
             None => {
                 warn!("Symbol not found for definition: {:?}", definition);
@@ -176,7 +207,7 @@ mod test {
 
     use actix_web::http::StatusCode;
 
-    use crate::api_types::{FilePosition, Position};
+    use crate::api_types::{FilePosition, Identifier, Position};
     use crate::initialize_app_state;
     use crate::test_utils::{python_sample_path, TestContext};
 
@@ -199,7 +230,12 @@ mod test {
 
         let response = find_definition(state, mock_request).await;
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{}",
+            format!("{:?}", response.body())
+        );
         assert_eq!(
             response.headers().get("content-type").unwrap(),
             "application/json"
@@ -232,9 +268,59 @@ mod test {
                 },
                 source_code: String::from("class AStarGraph(object):\n    # Define a class board like grid with two barriers\n\n    def __init__(self):\n        self.barriers = []\n        self.barriers.append(\n            [\n                (2, 4),\n                (2, 5),\n                (2, 6),\n                (3, 6),\n                (4, 6),\n                (5, 6),\n                (5, 5),\n                (5, 4),\n                (5, 3),\n                (5, 2),\n                (4, 2),\n                (3, 2),\n            ]\n        )\n\n    @property\n    def barriers(self):\n        return self.barriers\n\n    def heuristic(self, start, goal):\n        # Use Chebyshev distance heuristic if we can move one square either\n        # adjacent or diagonal\n        D = 1\n        D2 = 1\n        dx = abs(start[0] - goal[0])\n        dy = abs(start[1] - goal[1])\n        return D * (dx + dy) + (D2 - 2 * D) * min(dx, dy)\n\n    def get_vertex_neighbours(self, pos):\n        n = []\n        # Moves allow link a chess king\n        for dx, dy in [\n            (1, 0),\n            (-1, 0),\n            (0, 1),\n            (0, -1),\n            (1, 1),\n            (-1, 1),\n            (1, -1),\n            (-1, -1),\n        ]:\n            x2 = pos[0] + dx\n            y2 = pos[1] + dy\n            if x2 < 0 or x2 > 7 or y2 < 0 or y2 > 7:\n                continue\n            n.append((x2, y2))\n        return n\n\n    def move_cost(self, a, b):\n        for barrier in self.barriers:\n            if b in barrier:\n                return 100  # Extremely high cost to enter barrier squares\n        return 1  # Normal movement cost"),
             }]),
+            selected_identifier: Identifier {
+                name: String::from("AStarGraph"),
+                range: FileRange {
+                    path: String::from("main.py"),
+                    start: Position {
+                        line: 1,
+                        character: 18,
+                    },
+                    end: Position {
+                        line: 1,
+                        character: 28,
+                    },
+                },
+            },
         };
 
         assert_eq!(definition_response, expected_response);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_position() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = TestContext::setup(&python_sample_path(), false).await?;
+        let state = initialize_app_state().await?;
+
+        let mock_request = Json(GetDefinitionRequest {
+            position: FilePosition {
+                path: String::from("main.py"),
+                position: Position {
+                    line: 0, // Invalid line number
+                    character: 999,
+                },
+            },
+            include_source_code: false,
+            include_raw_response: false,
+        });
+
+        let response = find_definition(state, mock_request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+
+        let body = response.into_body();
+        let bytes = actix_web::body::to_bytes(body).await.unwrap();
+        let error_response: ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(
+            error_response.error,
+            "Failed to find definition from position: No identifier found at position. Closest matches: [Identifier { name: \"plt\", range: FileRange { path: \"main.py\", start: Position { line: 0, character: 28 }, end: Position { line: 0, character: 31 } } }, Identifier { name: \"pyplot\", range: FileRange { path: \"main.py\", start: Position { line: 0, character: 18 }, end: Position { line: 0, character: 24 } } }, Identifier { name: \"matplotlib\", range: FileRange { path: \"main.py\", start: Position { line: 0, character: 7 }, end: Position { line: 0, character: 17 } } }]"
+        );
         Ok(())
     }
 }

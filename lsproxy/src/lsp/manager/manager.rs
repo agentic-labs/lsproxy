@@ -1,4 +1,4 @@
-use crate::api_types::{get_mount_dir, SupportedLanguages};
+use crate::api_types::{get_mount_dir, Identifier, SupportedLanguages};
 use crate::ast_grep::client::AstGrepClient;
 use crate::ast_grep::types::AstGrepMatch;
 use crate::lsp::client::LspClient;
@@ -309,6 +309,22 @@ impl Manager {
             .map_err(|e| {
                 LspManagerError::InternalError(format!("Source code retrieval failed: {}", e))
             })
+    }
+
+    pub async fn get_file_identifiers(
+        &self,
+        file_path: &str,
+    ) -> Result<Vec<Identifier>, LspManagerError> {
+        let full_path = get_mount_dir().join(&file_path);
+        let full_path_str = full_path.to_str().unwrap_or_default();
+        let ast_grep_result = self
+            .ast_grep
+            .get_file_identifiers(full_path_str)
+            .await
+            .map_err(|e| {
+                LspManagerError::InternalError(format!("Symbol retrieval failed: {}", e))
+            })?;
+        Ok(ast_grep_result.into_iter().map(|s| s.into()).collect())
     }
 }
 

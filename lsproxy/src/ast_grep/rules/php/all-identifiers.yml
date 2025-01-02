@@ -1,0 +1,6 @@
+id: all-identifiers
+language: php
+rule:
+    pattern: $NAME
+    any:
+     - kind: name

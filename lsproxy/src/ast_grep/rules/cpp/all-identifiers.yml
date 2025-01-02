@@ -1,0 +1,10 @@
+id: all-identifiers
+language: cpp
+rule:
+    pattern: $NAME
+    any:
+     - kind: identifier
+     - kind: type_identifier
+     - kind: field_identifier
+
+

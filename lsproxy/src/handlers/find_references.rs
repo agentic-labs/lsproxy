@@ -1,10 +1,11 @@
 use actix_web::web::{Data, Json};
 use actix_web::HttpResponse;
 use log::{error, info};
-use lsp_types::{Location, Position as LspPosition, Range};
+use lsp_types::{Location, Position as LspPosition};
 
-use crate::api_types::{CodeContext, ErrorResponse, FileRange, Position};
+use crate::api_types::{CodeContext, ErrorResponse, FilePosition, FileRange, Position};
 use crate::api_types::{GetReferencesRequest, ReferencesResponse};
+use crate::handlers::utils;
 use crate::lsp::manager::{LspManagerError, Manager};
 use crate::utils::file_utils::uri_to_relative_path_string;
 use crate::AppState;
@@ -60,98 +61,145 @@ pub async fn find_references(
         }
     };
 
-    let references_result = manager
-        .find_references(
-            &info.identifier_position.path,
-            LspPosition {
-                line: info.identifier_position.position.line,
-                character: info.identifier_position.position.character,
-            },
-        )
-        .await;
+    let file_identifiers = match manager
+        .get_file_identifiers(&info.identifier_position.path)
+        .await
+    {
+        Ok(identifiers) => identifiers,
+        Err(e) => {
+            error!("Failed to get file identifiers: {:?}", e);
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get file identifiers: {}", e),
+            });
+        }
+    };
 
-    // We can get references outside the workspace so we want to filter those out as well
-    let filtered_reference_result = match references_result {
-        Ok(refs) => match manager.list_files().await {
-            Ok(files) => {
-                let mut filtered_refs: Vec<_> = refs
-                    .into_iter()
-                    .filter(|reference| {
-                        let path = uri_to_relative_path_string(&reference.uri);
-                        files.contains(&path)
-                    })
-                    .collect();
-
-                filtered_refs.sort_by(|a, b| {
-                    let uri_cmp = a.uri.to_string().cmp(&b.uri.to_string());
-                    if uri_cmp.is_eq() {
-                        a.range.start.line.cmp(&b.range.start.line)
-                    } else {
-                        uri_cmp
-                    }
+    let selected_identifier =
+        match utils::find_identifier_at_position(file_identifiers, &info.identifier_position).await
+        {
+            Ok(identifier) => identifier,
+            Err(e) => {
+                error!("Failed to find references from position: {:?}", e);
+                return HttpResponse::BadRequest().json(ErrorResponse {
+                    error: format!("Failed to find references from position: {}", e),
                 });
-
-                Ok(filtered_refs)
             }
-            Err(_) => Err(LspManagerError::InternalError(
-                "Failed to get workspace files".to_string(),
-            )),
-        },
-        Err(e) => Err(LspManagerError::InternalError(format!(
-            "Failed to get references: {}",
-            e
-        ))),
-    };
+        };
 
-    let code_contexts_result = if let Some(lines) = info.include_code_context_lines {
-        match &filtered_reference_result {
-            Ok(refs) => fetch_code_context(&manager, refs.clone(), lines)
-                .await
-                .map(Some)
-                .map_err(|e| {
-                    error!("Failed to fetch code context: {}", e);
-                    e
-                }),
-            Err(e) => Err(LspManagerError::InternalError(format!(
-                "Failed to get references: {}",
-                e
-            ))),
+    let references_result = find_and_filter_references(&manager, &info.identifier_position).await;
+    let code_contexts_result = get_code_contexts(
+        &manager,
+        &references_result,
+        info.include_code_context_lines,
+    )
+    .await;
+
+    match (references_result, code_contexts_result) {
+        (Ok(references), Ok(code_contexts)) => {
+            let raw_response = if info.include_raw_response {
+                match serde_json::to_value(&references) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        error!("Failed to serialize raw response: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let response = ReferencesResponse {
+                raw_response,
+                references: references
+                    .into_iter()
+                    .map(|loc| FilePosition {
+                        path: uri_to_relative_path_string(&loc.uri),
+                        position: Position {
+                            line: loc.range.start.line,
+                            character: loc.range.start.character,
+                        },
+                    })
+                    .collect(),
+                context: code_contexts,
+                selected_identifier,
+            };
+            HttpResponse::Ok().json(response)
         }
-    } else {
-        Ok(None)
-    };
-    match (filtered_reference_result, code_contexts_result) {
-        (Ok(references), Ok(code_contexts)) => HttpResponse::Ok().json(ReferencesResponse::from((
-            references,
-            code_contexts,
-            info.include_raw_response,
-        ))),
-        (Err(e), _) => {
-            error!("Failed to get references: {}", e);
-            match e {
-                LspManagerError::FileNotFound(path) => {
-                    HttpResponse::BadRequest().json(ErrorResponse {
-                        error: format!("File not found: {}", path),
-                    })
-                }
-                LspManagerError::LspClientNotFound(lang) => HttpResponse::InternalServerError()
-                    .body(format!("LSP client not found for {:?}", lang)),
-                LspManagerError::InternalError(msg) => {
-                    HttpResponse::InternalServerError().json(ErrorResponse {
-                        error: format!("Internal error: {}", msg),
-                    })
-                }
-                LspManagerError::UnsupportedFileType(path) => {
-                    HttpResponse::BadRequest().json(ErrorResponse {
-                        error: format!("Unsupported file type: {}", path),
-                    })
-                }
-            }
-        }
+        (Err(e), _) => handle_lsp_error(e),
         (_, Err(e)) => {
             error!("Failed to fetch code context: {}", e);
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to fetch code context: {}", e),
+            })
+        }
+    }
+}
+
+async fn find_and_filter_references(
+    manager: &Manager,
+    position: &FilePosition,
+) -> Result<Vec<Location>, LspManagerError> {
+    let references = manager
+        .find_references(
+            &position.path,
+            LspPosition {
+                line: position.position.line,
+                character: position.position.character,
+            },
+        )
+        .await?;
+
+    let files = manager.list_files().await?;
+    let mut filtered_refs: Vec<_> = references
+        .into_iter()
+        .filter(|reference| {
+            let path = uri_to_relative_path_string(&reference.uri);
+            files.contains(&path)
+        })
+        .collect();
+
+    filtered_refs.sort_by(|a, b| {
+        let uri_cmp = a.uri.to_string().cmp(&b.uri.to_string());
+        if uri_cmp.is_eq() {
+            a.range.start.line.cmp(&b.range.start.line)
+        } else {
+            uri_cmp
+        }
+    });
+
+    Ok(filtered_refs)
+}
+
+async fn get_code_contexts(
+    manager: &Manager,
+    references_result: &Result<Vec<Location>, LspManagerError>,
+    context_lines: Option<u32>,
+) -> Result<Option<Vec<CodeContext>>, LspManagerError> {
+    match (references_result, context_lines) {
+        (Ok(refs), Some(lines)) => fetch_code_context(manager, refs.clone(), lines)
+            .await
+            .map(Some),
+        _ => Ok(None),
+    }
+}
+
+fn handle_lsp_error(e: LspManagerError) -> HttpResponse {
+    error!("Failed to get references: {}", e);
+    match e {
+        LspManagerError::FileNotFound(path) => HttpResponse::BadRequest().json(ErrorResponse {
+            error: format!("File not found: {}", path),
+        }),
+        LspManagerError::LspClientNotFound(lang) => {
+            HttpResponse::InternalServerError().body(format!("LSP client not found for {:?}", lang))
+        }
+        LspManagerError::InternalError(msg) => {
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Internal error: {}", msg),
+            })
+        }
+        LspManagerError::UnsupportedFileType(path) => {
+            HttpResponse::BadRequest().json(ErrorResponse {
+                error: format!("Unsupported file type: {}", path),
             })
         }
     }
@@ -164,7 +212,7 @@ async fn fetch_code_context(
 ) -> Result<Vec<CodeContext>, LspManagerError> {
     let mut code_contexts = Vec::new();
     for reference in references {
-        let range = Range {
+        let range = lsp_types::Range {
             start: LspPosition {
                 line: reference.range.start.line.saturating_sub(context_lines),
                 character: 0,
@@ -269,6 +317,7 @@ mod test {
                 },
             ],
             context: None,
+            selected_identifier: reference_response.selected_identifier.clone(), // We can't predict this value
         };
 
         assert_eq!(expected_response, reference_response);
@@ -296,7 +345,12 @@ mod test {
 
         let response = find_references(state, mock_request).await;
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{}",
+            format!("{:?}", response.body())
+        );
         let content_type = response
             .headers()
             .get("content-type")
@@ -377,9 +431,41 @@ mod test {
                 },
             ],
             context: None,
+            selected_identifier: reference_response.selected_identifier.clone(), // We can't predict this value
         };
 
         assert_eq!(expected_response, reference_response);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_position() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = TestContext::setup(&python_sample_path(), false).await?;
+        let state = initialize_app_state().await?;
+
+        let mock_request = Json(GetReferencesRequest {
+            identifier_position: FilePosition {
+                path: String::from("graph.py"),
+                position: Position {
+                    line: 999, // Invalid line number
+                    character: 0,
+                },
+            },
+            include_code_context_lines: None,
+            include_raw_response: false,
+        });
+
+        let response = find_references(state, mock_request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body();
+        let bytes = actix_web::body::to_bytes(body).await?;
+        let error_response: ErrorResponse = serde_json::from_slice(&bytes)?;
+        assert_eq!(
+            error_response.error,
+            "Failed to find references from position: No identifier found at position. Closest matches: [Identifier { name: \"b\", range: FileRange { path: \"graph.py\", start: Position { line: 58, character: 15 }, end: Position { line: 58, character: 16 } } }, Identifier { name: \"barrier\", range: FileRange { path: \"graph.py\", start: Position { line: 58, character: 20 }, end: Position { line: 58, character: 27 } } }, Identifier { name: \"barrier\", range: FileRange { path: \"graph.py\", start: Position { line: 57, character: 12 }, end: Position { line: 57, character: 19 } } }]"
+        );
+
         Ok(())
     }
 }

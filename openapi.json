@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0"
     },
-    "version": "0.1.3"
+    "version": "0.1.4"
   },
   "servers": [
     {
@@ -250,7 +250,8 @@
         "type": "object",
         "description": "Response to a definition request.\n\nThe definition(s) of the symbol.\nPoints to the start position of the symbol's identifier.\n\ne.g. for the definition of `User` on line 5 of `src/main.py` with the code:\n```\n0: class User:\n_________^\n1:     def __init__(self, name, age):\n2:         self.name = name\n3:         self.age = age\n4:\n5: user = User(\"John\", 30)\n__________^\n```\nThe definition(s) will be `[{\"path\": \"src/main.py\", \"line\": 0, \"character\": 6}]`.",
         "required": [
-          "definitions"
+          "definitions",
+          "selected_identifier"
         ],
         "properties": {
           "definitions": {
@@ -261,6 +262,10 @@
           },
           "raw_response": {
             "description": "The raw response from the langserver.\n\nhttps://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition"
+          },
+          "selected_identifier": {
+            "$ref": "#/components/schemas/Identifier",
+            "description": "The identifier that was \"clicked-on\" to get the definition."
           },
           "source_code_context": {
             "type": [
@@ -420,6 +425,21 @@
           }
         }
       },
+      "Identifier": {
+        "type": "object",
+        "required": [
+          "name",
+          "range"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/components/schemas/FileRange"
+          }
+        }
+      },
       "Position": {
         "type": "object",
         "required": [
@@ -458,7 +478,8 @@
         "type": "object",
         "description": "Response to a references request.\n\nPoints to the start position of the symbol's identifier.\n\ne.g. for the references of `User` on line 0 character 6 of `src/main.py` with the code:\n```\n0: class User:\n1:     def __init__(self, name, age):\n2:         self.name = name\n3:         self.age = age\n4:\n5: user = User(\"John\", 30)\n_________^\n6:\n7: print(user.name)\n```\nThe references will be `[{\"path\": \"src/main.py\", \"line\": 5, \"character\": 7}]`.",
         "required": [
-          "references"
+          "references",
+          "selected_identifier"
         ],
         "properties": {
           "context": {
@@ -479,6 +500,10 @@
             "items": {
               "$ref": "#/components/schemas/FilePosition"
             }
+          },
+          "selected_identifier": {
+            "$ref": "#/components/schemas/Identifier",
+            "description": "The identifier that was \"clicked-on\" to get the references."
           }
         }
       },

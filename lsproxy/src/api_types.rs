@@ -1,7 +1,6 @@
-use log::warn;
-use lsp_types::{GotoDefinitionResponse, Location, LocationLink};
+use lsp_types::{Location, LocationLink};
 use serde::{Deserialize, Serialize};
-use serde_json::{to_value, Value};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -108,6 +107,17 @@ pub struct FileRange {
     pub end: Position,
 }
 
+impl FileRange {
+    pub fn contains(&self, position: FilePosition) -> bool {
+        let pos = &position.position;
+        self.path == position.path
+            && self.start.line <= pos.line
+            && self.end.line >= pos.line
+            && (self.start.line != pos.line || self.start.character <= pos.character)
+            && (self.end.line != pos.line || self.end.character >= pos.character)
+    }
+}
+
 impl From<Position> for lsp_types::Position {
     fn from(position: Position) -> Self {
         lsp_types::Position {
@@ -154,6 +164,12 @@ pub struct Symbol {
     pub identifier_position: FilePosition,
 
     /// The full range of the symbol.
+    pub range: FileRange,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Identifier {
+    pub name: String,
     pub range: FileRange,
 }
 
@@ -243,6 +259,8 @@ pub struct DefinitionResponse {
     /// The source code of symbol definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_code_context: Option<Vec<CodeContext>>,
+    /// The identifier that was "clicked-on" to get the definition.
+    pub selected_identifier: Identifier,
 }
 
 /// Response to a references request.
@@ -275,64 +293,11 @@ pub struct ReferencesResponse {
     /// The source code around the references.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<CodeContext>>,
+    /// The identifier that was "clicked-on" to get the references.
+    pub selected_identifier: Identifier,
 }
 
 pub type SymbolResponse = Vec<Symbol>;
-
-impl From<(GotoDefinitionResponse, Option<Vec<CodeContext>>, bool)> for DefinitionResponse {
-    fn from(
-        (response, source_code_context, include_raw): (
-            GotoDefinitionResponse,
-            Option<Vec<CodeContext>>,
-            bool,
-        ),
-    ) -> Self {
-        let raw_response = if include_raw {
-            Some(to_value(&response).unwrap_or_else(|e| {
-                warn!("Serialization failed: {:?}", e);
-                Value::Null
-            }))
-        } else {
-            None
-        };
-        let definitions = match response {
-            GotoDefinitionResponse::Scalar(location) => vec![FilePosition::from(location)],
-            GotoDefinitionResponse::Array(locations) => {
-                locations.into_iter().map(FilePosition::from).collect()
-            }
-            GotoDefinitionResponse::Link(links) => {
-                links.into_iter().map(FilePosition::from).collect()
-            }
-        };
-        DefinitionResponse {
-            raw_response,
-            definitions,
-            source_code_context,
-        }
-    }
-}
-
-impl From<(Vec<Location>, Option<Vec<CodeContext>>, bool)> for ReferencesResponse {
-    fn from(
-        (locations, source_code_context, include_raw): (
-            Vec<Location>,
-            Option<Vec<CodeContext>>,
-            bool,
-        ),
-    ) -> Self {
-        let raw_response = if include_raw {
-            Some(to_value(&locations).unwrap_or_default())
-        } else {
-            None
-        };
-        let references = locations.into_iter().map(FilePosition::from).collect();
-        ReferencesResponse {
-            raw_response,
-            references,
-            context: source_code_context,
-        }
-    }
-}
 
 impl From<Location> for FilePosition {
     fn from(location: Location) -> Self {

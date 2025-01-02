@@ -1,0 +1,10 @@
+id: all-identifiers
+language: rust
+rule:
+    pattern: $NAME
+    any:
+     - kind: identifier
+     - kind: field_identifier
+     - kind: type_identifier
+     - kind: self
+     - kind: super
