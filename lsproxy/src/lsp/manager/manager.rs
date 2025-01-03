@@ -1,5 +1,4 @@
 use crate::api_types::{get_mount_dir, SupportedLanguages};
-use crate::ast_grep::call_hierarchy::find_enclosing_function;
 use crate::ast_grep::client::AstGrepClient;
 use crate::ast_grep::types::AstGrepMatch;
 use crate::lsp::client::LspClient;
@@ -16,10 +15,9 @@ use crate::utils::workspace_documents::{
     TYPESCRIPT_AND_JAVASCRIPT_FILE_PATTERNS,
 };
 use log::{debug, error, warn};
-use lsp_types::{CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, GotoDefinitionResponse, Location, Position, Range, SymbolKind};
+use lsp_types::{CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
-use url::Url;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;

@@ -400,45 +400,95 @@ pub trait LspClient: Send {
             item.name, item.uri, item.selection_range
         );
 
-        let params = CallHierarchyIncomingCallsParams {
-            item,
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        };
+        // Get all workspace files
+        let workspace_files = self.get_workspace_documents().list_files().await;
+        let mut incoming_calls = Vec::new();
 
-        let result = self
-            .send_request(
-                "callHierarchy/incomingCalls",
-                Some(serde_json::to_value(params)?),
-            )
-            .await?;
+        // For each file, look for calls to our function
+        for file_path in workspace_files {
+            debug!("call_hierarchy_incoming_calls: Checking file {:?}", file_path);
+            
+            // Parse the file and look for function calls
+            let source = self.get_workspace_documents()
+                .read_text_document(&PathBuf::from(&file_path), None)
+                .await?;
 
-        debug!(
-            "call_hierarchy_incoming_calls: Raw response from server: {:#?}",
-            result
-        );
+            // Get the language handler and do all tree-sitter operations before any async calls
+            let potential_calls = {
+                let mut parser = Parser::new();
+                let lang_str = detect_language_string(file_path.to_str().ok_or("Invalid file path")?)?;
+                let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
+                    .ok_or_else(|| format!("No call hierarchy handler for language: {}", lang_str))?;
+                handler.configure_parser(&mut parser)?;
 
-        if result.is_null() {
-            debug!("call_hierarchy_incoming_calls: Server returned null response");
-            Ok(vec![])
-        } else {
-            match serde_json::from_value::<Vec<CallHierarchyIncomingCall>>(result.clone()) {
-                Ok(calls) => {
-                    debug!(
-                        "call_hierarchy_incoming_calls: Successfully parsed {} calls",
-                        calls.len()
-                    );
-                    Ok(calls)
+                let tree = parser.parse(&source, None)
+                    .ok_or("Failed to parse source")?;
+
+                // Use the function call query to find all calls
+                let query_str = handler.get_function_call_query();
+                let query = Query::new(&parser.language().unwrap(), query_str)?;
+                let mut cursor = QueryCursor::new();
+
+                // Collect all potential function calls
+                let mut calls = Vec::new();
+                let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+                while let Some(match_) = matches.next() {
+                    for capture in match_.captures {
+                        if query.capture_names()[capture.index as usize] == "func_name" {
+                            let call_name = source[capture.node.byte_range()].to_string();
+                            if call_name == item.name {
+                                calls.push(Position {
+                                    line: capture.node.start_position().row as u32,
+                                    character: capture.node.start_position().column as u32,
+                                });
+                            }
+                        }
+                    }
                 }
-                Err(e) => {
-                    error!(
-                        "call_hierarchy_incoming_calls: Failed to parse response: {}. Raw response: {:?}",
-                        e, result
-                    );
-                    Err(e.into())
+                calls
+            };
+            
+            // Now process each potential call with async operations
+            for position in potential_calls {
+                if let Some(obj) = self.get_referenced_object(
+                    &Package { path: file_path.to_string_lossy().to_string() },
+                    &file_path.to_string_lossy().to_string(),
+                    position,
+                ).await? {
+                    if obj.is_reference {
+                        debug!(
+                            "call_hierarchy_incoming_calls: Found call from {} in {}",
+                            obj.name, obj.file_path
+                        );
+                        incoming_calls.push(CallHierarchyIncomingCall {
+                            from: CallHierarchyItem {
+                                name: obj.name.clone(),
+                                kind: lsp_types::SymbolKind::FUNCTION,
+                                tags: None,
+                                detail: Some(format!("{} • {}", obj.package_path, std::path::Path::new(&obj.file_path).file_name().unwrap().to_string_lossy())),
+                                uri: Url::from_file_path(&obj.file_path).unwrap(),
+                                range: obj.range,
+                                selection_range: obj.range,
+                                data: None,
+                            },
+                            from_ranges: vec![Range {
+                                start: position,
+                                end: Position {
+                                    line: position.line,
+                                    character: position.character + item.name.len() as u32,
+                                },
+                            }],
+                        });
+                    }
                 }
             }
         }
+
+        debug!(
+            "call_hierarchy_incoming_calls: Returning {} incoming calls",
+            incoming_calls.len()
+        );
+        Ok(incoming_calls)
     }
 
     async fn call_hierarchy_outgoing_calls(
@@ -450,45 +500,73 @@ pub trait LspClient: Send {
             item.name, item.uri, item.selection_range
         );
 
-        let params = CallHierarchyOutgoingCallsParams {
-            item,
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        };
+        // First get the function definition object
+        let func_obj = self.get_referenced_object(
+            &Package { path: item.uri.path().to_string() },
+            item.uri.path(),
+            item.selection_range.start,
+        ).await?;
 
-        let result = self
-            .send_request(
-                "callHierarchy/outgoingCalls",
-                Some(serde_json::to_value(params)?),
-            )
-            .await?;
+        let mut outgoing_calls = Vec::new();
+        if let Some(func_obj) = func_obj {
+            // Find all function calls within this function's body
+            let call_ranges = self.find_function_calls(&func_obj).await?;
+            debug!(
+                "call_hierarchy_outgoing_calls: Found {} potential calls",
+                call_ranges.len()
+            );
 
-        debug!(
-            "call_hierarchy_outgoing_calls: Raw response from server: {:#?}",
-            result
-        );
+            for call_range in call_ranges {
+                // For each call, get its definition
+                if let Some(obj) = self.get_referenced_object(
+                    &Package { path: item.uri.path().to_string() },
+                    item.uri.path(),
+                    call_range.start,
+                ).await? {
+                    if obj.is_reference {  // It's a call to another function
+                        // Try to find the actual definition
+                        let def_response = self.text_document_definition(
+                            item.uri.path(),
+                            call_range.start,
+                        ).await?;
 
-        if result.is_null() {
-            debug!("call_hierarchy_outgoing_calls: Server returned null response");
-            Ok(vec![])
-        } else {
-            match serde_json::from_value::<Vec<CallHierarchyOutgoingCall>>(result.clone()) {
-                Ok(calls) => {
-                    debug!(
-                        "call_hierarchy_outgoing_calls: Successfully parsed {} calls",
-                        calls.len()
-                    );
-                    Ok(calls)
-                }
-                Err(e) => {
-                    error!(
-                        "call_hierarchy_outgoing_calls: Failed to parse response: {}. Raw response: {:?}",
-                        e, result
-                    );
-                    Err(e.into())
+                        if let GotoDefinitionResponse::Array(locations) = def_response {
+                            if let Some(def_loc) = locations.first() {
+                                if let Some(def_obj) = self.get_referenced_object(
+                                    &Package { path: def_loc.uri.path().to_string() },
+                                    def_loc.uri.path(),
+                                    def_loc.range.start,
+                                ).await? {
+                                    debug!(
+                                        "call_hierarchy_outgoing_calls: Found call to {} in {}",
+                                        def_obj.name, def_obj.file_path
+                                    );
+                                    outgoing_calls.push(CallHierarchyOutgoingCall {
+                                        to: CallHierarchyItem {
+                                            name: def_obj.name.clone(),
+                                            kind: lsp_types::SymbolKind::FUNCTION,
+                                            tags: None,
+                                            detail: Some(format!("{} • {}", def_obj.package_path, std::path::Path::new(&def_obj.file_path).file_name().unwrap().to_string_lossy())),
+                                            uri: Url::from_file_path(&def_obj.file_path).unwrap(),
+                                            range: def_obj.range,
+                                            selection_range: def_obj.range,
+                                            data: None,
+                                        },
+                                        from_ranges: vec![call_range],
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        debug!(
+            "call_hierarchy_outgoing_calls: Returning {} outgoing calls",
+            outgoing_calls.len()
+        );
+        Ok(outgoing_calls)
     }
 
     async fn prepare_call_hierarchy(
