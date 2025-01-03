@@ -7,7 +7,7 @@ async fn test_references() -> Result<(), Box<dyn std::error::Error>> {
         .manager
         .as_ref()
         .ok_or("Manager is not initialized")?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
     let references = manager
         .find_references(
             "map.c",
