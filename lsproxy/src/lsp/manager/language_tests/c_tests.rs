@@ -7,7 +7,7 @@ async fn test_references() -> Result<(), Box<dyn std::error::Error>> {
         .manager
         .as_ref()
         .ok_or("Manager is not initialized")?;
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(Duration::from_secs(120)).await; // TODO: implement explicit waiting for clang initialization
     let references = manager
         .find_references(
             "map.c",
