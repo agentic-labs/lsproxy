@@ -126,7 +126,7 @@ pub async fn get_call_hierarchy(
                     item.name,
                     if info.use_manual_hierarchy { "manual" } else { "lsp" }
                 );
-                let incoming_result = manager.incoming_calls(&item).await;
+                let incoming_result = manager.incoming_calls(&item, info.use_manual_hierarchy).await;
                 match &incoming_result {
                     Ok(calls) => {
                         debug!(

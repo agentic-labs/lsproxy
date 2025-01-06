@@ -2,14 +2,11 @@ use crate::lsp::json_rpc::JsonRpc;
 use crate::lsp::process::Process;
 use crate::lsp::{ExpectedMessageKey, JsonRpcHandler, ProcessHandler};
 use crate::utils::file_utils::{detect_language_string, search_directories};
-use lsp_types::{
-    CallHierarchyItem, Location, Position,
-    Range, Url,
-};
+use lsp_types::{CallHierarchyItem, Location, Position, Range, Url};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tree_sitter::{Parser, Point, Query, QueryCursor, Tree};
 use streaming_iterator::StreamingIterator;
+use tree_sitter::{Parser, Point, Query, QueryCursor, Tree};
 
 // Types for manual call hierarchy implementation
 #[derive(Debug, Clone)]
@@ -32,9 +29,8 @@ pub struct Object {
 use async_trait::async_trait;
 use log::{debug, error, warn};
 use lsp_types::{
-    CallHierarchyPrepareParams, CallHierarchyClientCapabilities,
-    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams,
-    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams,
+    CallHierarchyClientCapabilities, CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
     GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult,
     PartialResultParams, PublishDiagnosticsClientCapabilities, ReferenceContext, ReferenceParams,
@@ -64,8 +60,11 @@ pub trait LspClient: Send {
             .send_request("initialize", Some(serde_json::to_value(params)?))
             .await?;
         let init_result: InitializeResult = serde_json::from_value(result)?;
-        debug!("Initialization successful. Server capabilities: {:#?}", init_result.capabilities);
-        
+        debug!(
+            "Initialization successful. Server capabilities: {:#?}",
+            init_result.capabilities
+        );
+
         // Specifically log call hierarchy support
         if let Some(call_hierarchy) = init_result.capabilities.call_hierarchy_provider {
             debug!("Server supports call hierarchy: {:#?}", call_hierarchy);
@@ -170,7 +169,7 @@ pub trait LspClient: Send {
                         } else if let Some(params) = message.params.clone() {
                             let message_key = ExpectedMessageKey {
                                 method: message.method.clone().unwrap(),
-                                params: params,
+                                params,
                             };
                             if let Some(sender) =
                                 pending_requests.remove_notification(message_key).await
@@ -257,7 +256,7 @@ pub trait LspClient: Send {
                 text_document: TextDocumentIdentifier {
                     uri: Url::from_file_path(file_path).unwrap(),
                 },
-                position: position,
+                position,
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
@@ -273,10 +272,7 @@ pub trait LspClient: Send {
                 Some(serde_json::to_value(params)?),
             )
             .await?;
-        debug!(
-            "text_document_definition: Raw response: {:?}",
-            result
-        );
+        debug!("text_document_definition: Raw response: {:?}", result);
 
         // If result is null, default to an empty array response instead of failing deserialization
         let goto_resp: GotoDefinitionResponse = if result.is_null() {
@@ -285,7 +281,10 @@ pub trait LspClient: Send {
         } else {
             match serde_json::from_value::<GotoDefinitionResponse>(result.clone()) {
                 Ok(resp) => {
-                    debug!("text_document_definition: Successfully parsed response: {:?}", resp);
+                    debug!(
+                        "text_document_definition: Successfully parsed response: {:?}",
+                        resp
+                    );
                     resp
                 }
                 Err(e) => {
@@ -394,179 +393,314 @@ pub trait LspClient: Send {
     async fn call_hierarchy_incoming_calls(
         &mut self,
         item: CallHierarchyItem,
+        use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyIncomingCall>, Box<dyn Error + Send + Sync>> {
         debug!(
-            "call_hierarchy_incoming_calls: Starting for item: name={}, uri={}, range={:?}",
-            item.name, item.uri, item.selection_range
+            "call_hierarchy_incoming_calls: Starting for item: name={}, uri={}, range={:?}, mode={}",
+            item.name, item.uri, item.selection_range,
+            if use_manual_hierarchy { "manual" } else { "lsp" }
         );
 
-        // Get all workspace files
-        let workspace_files = self.get_workspace_documents().list_files().await;
-        let mut incoming_calls = Vec::new();
+        if !use_manual_hierarchy {
+            debug!("call_hierarchy_incoming_calls: Using LSP server implementation");
+            let params = CallHierarchyIncomingCallsParams {
+                item: item.clone(),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            };
 
-        // For each file, look for calls to our function
-        for file_path in workspace_files {
-            debug!("call_hierarchy_incoming_calls: Checking file {:?}", file_path);
-            
-            // Parse the file and look for function calls
-            let source = self.get_workspace_documents()
-                .read_text_document(&PathBuf::from(&file_path), None)
+            let result = self
+                .send_request(
+                    "callHierarchy/incomingCalls",
+                    Some(serde_json::to_value(params)?),
+                )
                 .await?;
 
-            // Get the language handler and do all tree-sitter operations before any async calls
-            let potential_calls = {
-                let mut parser = Parser::new();
-                let lang_str = detect_language_string(file_path.to_str().ok_or("Invalid file path")?)?;
-                let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
-                    .ok_or_else(|| format!("No call hierarchy handler for language: {}", lang_str))?;
-                handler.configure_parser(&mut parser)?;
+            debug!(
+                "call_hierarchy_incoming_calls: Raw response from server: {:#?}",
+                result
+            );
 
-                let tree = parser.parse(&source, None)
-                    .ok_or("Failed to parse source")?;
-
-                // Use the function call query to find all calls
-                let query_str = handler.get_function_call_query();
-                let query = Query::new(&parser.language().unwrap(), query_str)?;
-                let mut cursor = QueryCursor::new();
-
-                // Collect all potential function calls
-                let mut calls = Vec::new();
-                let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
-                while let Some(match_) = matches.next() {
-                    for capture in match_.captures {
-                        if query.capture_names()[capture.index as usize] == "func_name" {
-                            let call_name = source[capture.node.byte_range()].to_string();
-                            if call_name == item.name {
-                                calls.push(Position {
-                                    line: capture.node.start_position().row as u32,
-                                    character: capture.node.start_position().column as u32,
-                                });
-                            }
-                        }
-                    }
-                }
-                calls
-            };
-            
-            // Now process each potential call with async operations
-            for position in potential_calls {
-                if let Some(obj) = self.get_referenced_object(
-                    &Package { path: file_path.to_string_lossy().to_string() },
-                    &file_path.to_string_lossy().to_string(),
-                    position,
-                ).await? {
-                    if obj.is_reference {
+            if result.is_null() {
+                debug!("call_hierarchy_incoming_calls: Server returned null response");
+                Ok(vec![])
+            } else {
+                match serde_json::from_value::<Vec<CallHierarchyIncomingCall>>(result.clone()) {
+                    Ok(calls) => {
                         debug!(
-                            "call_hierarchy_incoming_calls: Found call from {} in {}",
-                            obj.name, obj.file_path
+                            "call_hierarchy_incoming_calls: Successfully parsed {} calls from response",
+                            calls.len()
                         );
-                        incoming_calls.push(CallHierarchyIncomingCall {
-                            from: CallHierarchyItem {
-                                name: obj.name.clone(),
-                                kind: lsp_types::SymbolKind::FUNCTION,
-                                tags: None,
-                                detail: Some(format!("{} • {}", obj.package_path, std::path::Path::new(&obj.file_path).file_name().unwrap().to_string_lossy())),
-                                uri: Url::from_file_path(&obj.file_path).unwrap(),
-                                range: obj.range,
-                                selection_range: obj.range,
-                                data: None,
-                            },
-                            from_ranges: vec![Range {
-                                start: position,
-                                end: Position {
-                                    line: position.line,
-                                    character: position.character + item.name.len() as u32,
-                                },
-                            }],
-                        });
+                        Ok(calls)
+                    }
+                    Err(e) => {
+                        debug!(
+                            "call_hierarchy_incoming_calls: Failed to parse response: {}. Raw response: {:?}",
+                            e, result
+                        );
+                        Ok(vec![])
                     }
                 }
             }
-        }
+        } else {
+            debug!("call_hierarchy_incoming_calls: Using manual implementation");
+            // Get all workspace files
+            let workspace_files = self.get_workspace_documents().list_files().await;
+            let mut incoming_calls = Vec::new();
 
-        debug!(
-            "call_hierarchy_incoming_calls: Returning {} incoming calls",
-            incoming_calls.len()
-        );
-        Ok(incoming_calls)
+            // For each file, look for calls to our function
+            for file_path in workspace_files {
+                debug!(
+                    "call_hierarchy_incoming_calls: Checking file {:?}",
+                    file_path
+                );
+
+                // Parse the file and look for function calls
+                let source = self
+                    .get_workspace_documents()
+                    .read_text_document(&PathBuf::from(&file_path), None)
+                    .await?;
+
+                // Get the language handler and do all tree-sitter operations before any async calls
+                let potential_calls = {
+                    let mut parser = Parser::new();
+                    let lang_str =
+                        detect_language_string(file_path.to_str().ok_or("Invalid file path")?)?;
+                    let handler =
+                        crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang_str)
+                            .ok_or_else(|| {
+                                format!("No call hierarchy handler for language: {}", lang_str)
+                            })?;
+                    handler.configure_parser(&mut parser)?;
+
+                    let tree = parser
+                        .parse(&source, None)
+                        .ok_or("Failed to parse source")?;
+
+                    // Use the function call query to find all calls
+                    let query_str = handler.get_function_call_query();
+                    let query = Query::new(&parser.language().unwrap(), query_str)?;
+                    let mut cursor = QueryCursor::new();
+
+                    // Collect all potential function calls
+                    let mut calls = Vec::new();
+                    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+                    while let Some(match_) = matches.next() {
+                        for capture in match_.captures {
+                            if query.capture_names()[capture.index as usize] == "func_name" {
+                                let call_name = source[capture.node.byte_range()].to_string();
+                                if call_name == item.name {
+                                    calls.push(Position {
+                                        line: capture.node.start_position().row as u32,
+                                        character: capture.node.start_position().column as u32,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    calls
+                };
+
+                // Now process each potential call with async operations
+                for position in potential_calls {
+                    if let Some(obj) = self
+                        .get_referenced_object(
+                            &Package {
+                                path: file_path.to_string_lossy().to_string(),
+                            },
+                            &file_path.to_string_lossy().to_string(),
+                            position,
+                        )
+                        .await?
+                    {
+                        if obj.is_reference {
+                            debug!(
+                                "call_hierarchy_incoming_calls: Found call from {} in {}",
+                                obj.name, obj.file_path
+                            );
+                            incoming_calls.push(CallHierarchyIncomingCall {
+                                from: CallHierarchyItem {
+                                    name: obj.name.clone(),
+                                    kind: lsp_types::SymbolKind::FUNCTION,
+                                    tags: None,
+                                    detail: Some(format!(
+                                        "{} • {}",
+                                        obj.package_path,
+                                        std::path::Path::new(&obj.file_path)
+                                            .file_name()
+                                            .unwrap()
+                                            .to_string_lossy()
+                                    )),
+                                    uri: Url::from_file_path(&obj.file_path).unwrap(),
+                                    range: obj.range,
+                                    selection_range: obj.range,
+                                    data: None,
+                                },
+                                from_ranges: vec![Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + item.name.len() as u32,
+                                    },
+                                }],
+                            });
+                        }
+                    }
+                }
+            }
+
+            debug!(
+                "call_hierarchy_incoming_calls: Returning {} incoming calls",
+                incoming_calls.len()
+            );
+            Ok(incoming_calls)
+        }
     }
 
     async fn call_hierarchy_outgoing_calls(
         &mut self,
         item: CallHierarchyItem,
+        use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyOutgoingCall>, Box<dyn Error + Send + Sync>> {
         debug!(
-            "call_hierarchy_outgoing_calls: Starting for item: name={}, uri={}, range={:?}",
-            item.name, item.uri, item.selection_range
+            "call_hierarchy_outgoing_calls: Starting for item: name={}, uri={}, range={:?}, mode={}",
+            item.name, item.uri, item.selection_range,
+            if use_manual_hierarchy { "manual" } else { "lsp" }
         );
 
-        // First get the function definition object
-        let func_obj = self.get_referenced_object(
-            &Package { path: item.uri.path().to_string() },
-            item.uri.path(),
-            item.selection_range.start,
-        ).await?;
+        if !use_manual_hierarchy {
+            debug!("call_hierarchy_outgoing_calls: Using LSP server implementation");
+            let params = CallHierarchyOutgoingCallsParams {
+                item: item.clone(),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            };
 
-        let mut outgoing_calls = Vec::new();
-        if let Some(func_obj) = func_obj {
-            // Find all function calls within this function's body
-            let call_ranges = self.find_function_calls(&func_obj).await?;
+            let result = self
+                .send_request(
+                    "callHierarchy/outgoingCalls",
+                    Some(serde_json::to_value(params)?),
+                )
+                .await?;
+
             debug!(
-                "call_hierarchy_outgoing_calls: Found {} potential calls",
-                call_ranges.len()
+                "call_hierarchy_outgoing_calls: Raw response from server: {:#?}",
+                result
             );
 
-            for call_range in call_ranges {
-                // For each call, get its definition
-                if let Some(obj) = self.get_referenced_object(
-                    &Package { path: item.uri.path().to_string() },
+            if result.is_null() {
+                debug!("call_hierarchy_outgoing_calls: Server returned null response");
+                Ok(vec![])
+            } else {
+                match serde_json::from_value::<Vec<CallHierarchyOutgoingCall>>(result.clone()) {
+                    Ok(calls) => {
+                        debug!(
+                            "call_hierarchy_outgoing_calls: Successfully parsed {} calls from response",
+                            calls.len()
+                        );
+                        Ok(calls)
+                    }
+                    Err(e) => {
+                        debug!(
+                            "call_hierarchy_outgoing_calls: Failed to parse response: {}. Raw response: {:?}",
+                            e, result
+                        );
+                        Ok(vec![])
+                    }
+                }
+            }
+        } else {
+            debug!("call_hierarchy_outgoing_calls: Using manual implementation");
+            // First get the function definition object
+            let func_obj = self
+                .get_referenced_object(
+                    &Package {
+                        path: item.uri.path().to_string(),
+                    },
                     item.uri.path(),
-                    call_range.start,
-                ).await? {
-                    if obj.is_reference {  // It's a call to another function
-                        // Try to find the actual definition
-                        let def_response = self.text_document_definition(
+                    item.selection_range.start,
+                )
+                .await?;
+
+            let mut outgoing_calls = Vec::new();
+            if let Some(func_obj) = func_obj {
+                // Find all function calls within this function's body
+                let call_ranges = self.find_function_calls(&func_obj).await?;
+                debug!(
+                    "call_hierarchy_outgoing_calls: Found {} potential calls",
+                    call_ranges.len()
+                );
+
+                for call_range in call_ranges {
+                    // For each call, get its definition
+                    if let Some(obj) = self
+                        .get_referenced_object(
+                            &Package {
+                                path: item.uri.path().to_string(),
+                            },
                             item.uri.path(),
                             call_range.start,
-                        ).await?;
+                        )
+                        .await?
+                    {
+                        if obj.is_reference {
+                            // It's a call to another function
+                            // Try to find the actual definition
+                            let def_response = self
+                                .text_document_definition(item.uri.path(), call_range.start)
+                                .await?;
 
-                        if let GotoDefinitionResponse::Array(locations) = def_response {
-                            if let Some(def_loc) = locations.first() {
-                                if let Some(def_obj) = self.get_referenced_object(
-                                    &Package { path: def_loc.uri.path().to_string() },
-                                    def_loc.uri.path(),
-                                    def_loc.range.start,
-                                ).await? {
-                                    debug!(
-                                        "call_hierarchy_outgoing_calls: Found call to {} in {}",
-                                        def_obj.name, def_obj.file_path
-                                    );
-                                    outgoing_calls.push(CallHierarchyOutgoingCall {
-                                        to: CallHierarchyItem {
-                                            name: def_obj.name.clone(),
-                                            kind: lsp_types::SymbolKind::FUNCTION,
-                                            tags: None,
-                                            detail: Some(format!("{} • {}", def_obj.package_path, std::path::Path::new(&def_obj.file_path).file_name().unwrap().to_string_lossy())),
-                                            uri: Url::from_file_path(&def_obj.file_path).unwrap(),
-                                            range: def_obj.range,
-                                            selection_range: def_obj.range,
-                                            data: None,
-                                        },
-                                        from_ranges: vec![call_range],
-                                    });
+                            if let GotoDefinitionResponse::Array(locations) = def_response {
+                                if let Some(def_loc) = locations.first() {
+                                    if let Some(def_obj) = self
+                                        .get_referenced_object(
+                                            &Package {
+                                                path: def_loc.uri.path().to_string(),
+                                            },
+                                            def_loc.uri.path(),
+                                            def_loc.range.start,
+                                        )
+                                        .await?
+                                    {
+                                        debug!(
+                                            "call_hierarchy_outgoing_calls: Found call to {} in {}",
+                                            def_obj.name, def_obj.file_path
+                                        );
+                                        outgoing_calls.push(CallHierarchyOutgoingCall {
+                                            to: CallHierarchyItem {
+                                                name: def_obj.name.clone(),
+                                                kind: lsp_types::SymbolKind::FUNCTION,
+                                                tags: None,
+                                                detail: Some(format!(
+                                                    "{} • {}",
+                                                    def_obj.package_path,
+                                                    std::path::Path::new(&def_obj.file_path)
+                                                        .file_name()
+                                                        .unwrap()
+                                                        .to_string_lossy()
+                                                )),
+                                                uri: Url::from_file_path(&def_obj.file_path)
+                                                    .unwrap(),
+                                                range: def_obj.range,
+                                                selection_range: def_obj.range,
+                                                data: None,
+                                            },
+                                            from_ranges: vec![call_range],
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        debug!(
-            "call_hierarchy_outgoing_calls: Returning {} outgoing calls",
-            outgoing_calls.len()
-        );
-        Ok(outgoing_calls)
+            debug!(
+                "call_hierarchy_outgoing_calls: Returning {} outgoing calls",
+                outgoing_calls.len()
+            );
+            Ok(outgoing_calls)
+        }
     }
 
     async fn prepare_call_hierarchy(
@@ -579,7 +713,7 @@ pub trait LspClient: Send {
             "prepare_call_hierarchy: Starting with file={}, position={:?}, manual={}",
             file_path, position, use_manual_hierarchy
         );
-        
+
         if !use_manual_hierarchy {
             debug!("prepare_call_hierarchy: Using LSP server implementation");
             let needs_open = {
@@ -652,20 +786,21 @@ pub trait LspClient: Send {
             }
 
             // For Go, if we're on a method call (x.y), adjust position to the method name
-            let adjusted_position = if let Some(line) = document_text.lines().nth(position.line as usize) {
-                let before_cursor = &line[..position.character as usize];
-                if let Some(dot_pos) = before_cursor.rfind('.') {
-                    // We're after a dot, use the position right after the dot
-                    Position {
-                        line: position.line,
-                        character: (dot_pos + 1) as u32,
+            let adjusted_position =
+                if let Some(line) = document_text.lines().nth(position.line as usize) {
+                    let before_cursor = &line[..position.character as usize];
+                    if let Some(dot_pos) = before_cursor.rfind('.') {
+                        // We're after a dot, use the position right after the dot
+                        Position {
+                            line: position.line,
+                            character: (dot_pos + 1) as u32,
+                        }
+                    } else {
+                        position
                     }
                 } else {
                     position
-                }
-            } else {
-                position
-            };
+                };
 
             debug!(
                 "prepare_call_hierarchy: Adjusted position from {:?} to {:?}",
@@ -693,12 +828,9 @@ pub trait LspClient: Send {
                     "uri": Url::from_file_path(file_path).map_err(|_| "Invalid file path")?
                 }
             });
-            
+
             if let Ok(diagnostics) = self
-                .send_request(
-                    "textDocument/diagnostic",
-                    Some(diagnostic_params),
-                )
+                .send_request("textDocument/diagnostic", Some(diagnostic_params))
                 .await
             {
                 debug!("File diagnostics: {:?}", diagnostics);
@@ -710,7 +842,7 @@ pub trait LspClient: Send {
                     Some(serde_json::to_value(params)?),
                 )
                 .await?;
-                
+
             debug!(
                 "prepare_call_hierarchy: Raw response from server: {:#?}",
                 result
@@ -728,10 +860,7 @@ pub trait LspClient: Send {
             });
 
             if let Ok(hover_info) = self
-                .send_request(
-                    "textDocument/hover",
-                    Some(hover_params),
-                )
+                .send_request("textDocument/hover", Some(hover_params))
                 .await
             {
                 debug!("Hover information at position: {:?}", hover_info);
@@ -786,13 +915,15 @@ pub trait LspClient: Send {
                 let definition_obj = if obj.is_reference {
                     debug!("Found reference, looking up definition");
                     // Look up the definition
-                    let def_response = self.text_document_definition(
-                        file_path,
-                        Position {
-                            line: obj.range.start.line,
-                            character: obj.range.start.character,
-                        },
-                    ).await?;
+                    let def_response = self
+                        .text_document_definition(
+                            file_path,
+                            Position {
+                                line: obj.range.start.line,
+                                character: obj.range.start.character,
+                            },
+                        )
+                        .await?;
 
                     match def_response {
                         GotoDefinitionResponse::Array(locations) if !locations.is_empty() => {
@@ -1000,11 +1131,19 @@ pub trait LspClient: Send {
                         "get_referenced_object: Walking up tree, current node: {}",
                         parent.kind()
                     );
-                    if parent.kind() == "call_expression" || parent.kind() == "call" {
+                    if parent.kind() == "call_expression"
+                        || parent.kind() == "call"
+                        || parent.kind() == "method_invocation"
+                    {
                         found_call = true;
-                        debug!("get_referenced_object: Found call expression");
+                        debug!(
+                            "get_referenced_object: Found call expression with type: {}",
+                            parent.kind()
+                        );
                         break;
-                    } else if parent.kind() == "function_item" || parent.kind() == "function_declaration" {
+                    } else if parent.kind() == "function_item"
+                        || parent.kind() == "function_declaration"
+                    {
                         found_function = true;
                         debug!("get_referenced_object: Found function definition");
                         break;
@@ -1019,7 +1158,14 @@ pub trait LspClient: Send {
                     } else {
                         current
                     };
-                    debug!("get_referenced_object: Creating object for {}", if found_call { "function call" } else { "function definition" });
+                    debug!(
+                        "get_referenced_object: Creating object for {}",
+                        if found_call {
+                            "function call"
+                        } else {
+                            "function definition"
+                        }
+                    );
                     Some(Object {
                         name,
                         package_path: pkg.path.clone(),
@@ -1034,8 +1180,11 @@ pub trait LspClient: Send {
                         is_reference: found_call,
                     })
                 } else if let Some(parent) = initial_node.parent() {
-                    if parent.kind() == "function_definition" || parent.kind() == "method_definition" || 
-                       parent.kind() == "function_item" || parent.kind() == "function_declaration" {
+                    if parent.kind() == "function_definition"
+                        || parent.kind() == "method_definition"
+                        || parent.kind() == "function_item"
+                        || parent.kind() == "function_declaration"
+                    {
                         debug!("get_referenced_object: Found function/method definition");
                         // Use the parent node (full function) for the range and node_range
                         Some(Object {
@@ -1062,7 +1211,7 @@ pub trait LspClient: Send {
                     debug!("get_referenced_object: No parent node found");
                     None
                 }
-            },
+            }
             // If we're directly on a definition node
             "function_definition"
             | "method_definition"
@@ -1080,25 +1229,34 @@ pub trait LspClient: Send {
                     match query_matches.get() {
                         Some(match_) => {
                             for capture in match_.captures {
-                                if query.capture_names()[capture.index as usize].ends_with("_name") {
+                                if query.capture_names()[capture.index as usize].ends_with("_name")
+                                {
                                     let name = source[capture.node.byte_range()].to_string();
-                                    debug!("get_referenced_object: Found definition name: {}", name);
+                                    debug!(
+                                        "get_referenced_object: Found definition name: {}",
+                                        name
+                                    );
                                     return Ok(Some(Object {
                                         name,
                                         package_path: pkg.path.clone(),
                                         file_path: file_path.to_string(),
-                                        range: match self.tree_sitter_to_lsp_range(&initial_node, &source) {
+                                        range: match self
+                                            .tree_sitter_to_lsp_range(&initial_node, &source)
+                                        {
                                             Ok(r) => r,
                                             Err(_e) => return Ok(None),
                                         },
-                                        node_range: (initial_node.start_byte(), initial_node.end_byte()),
+                                        node_range: (
+                                            initial_node.start_byte(),
+                                            initial_node.end_byte(),
+                                        ),
                                         source: source.clone(),
                                         tree: tree.clone(),
                                         is_reference: false,
                                     }));
                                 }
                             }
-                        },
+                        }
                         None => break,
                     }
                 }
@@ -1209,7 +1367,6 @@ pub trait LspClient: Send {
             },
         })
     }
-    
 
     async fn find_function_calls(
         &mut self,
@@ -1240,7 +1397,7 @@ pub trait LspClient: Send {
                             ranges.push(lsp_types::Range::new(start_pos, end_pos));
                         }
                     }
-                },
+                }
                 None => break,
             }
         }

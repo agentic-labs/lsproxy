@@ -35,6 +35,13 @@ impl HandlerFactory for GoHandlerFactory {
     }
 }
 
+struct JavaHandlerFactory;
+impl HandlerFactory for JavaHandlerFactory {
+    fn create(&self) -> Box<dyn LanguageCallHierarchy> {
+        Box::new(super::java::JavaCallHierarchy {})
+    }
+}
+
 static HANDLERS: Lazy<HashMap<&str, Box<dyn HandlerFactory>>> = Lazy::new(|| {
     let mut m = HashMap::new();
     m.insert("python", Box::new(PythonHandlerFactory) as Box<dyn HandlerFactory>);
@@ -44,6 +51,7 @@ static HANDLERS: Lazy<HashMap<&str, Box<dyn HandlerFactory>>> = Lazy::new(|| {
     m.insert("typescriptjavascript", Box::new(TypeScriptHandlerFactory) as Box<dyn HandlerFactory>);
     m.insert("rust", Box::new(RustHandlerFactory) as Box<dyn HandlerFactory>);
     m.insert("golang", Box::new(GoHandlerFactory) as Box<dyn HandlerFactory>);
+    m.insert("java", Box::new(JavaHandlerFactory) as Box<dyn HandlerFactory>);
     m
 });
 

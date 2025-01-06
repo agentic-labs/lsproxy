@@ -483,15 +483,17 @@ impl Manager {
     pub async fn incoming_calls(
         &self,
         item: &CallHierarchyItem,
+        use_manual_hierarchy: bool,
     ) -> Result<Vec<CallHierarchyIncomingCall>, LspManagerError> {
         debug!(
-            "[IncomingCalls] Starting analysis for item: name='{}', uri={}, range={}:{}-{}:{}",
+            "[IncomingCalls] Starting analysis for item: name='{}', uri={}, range={}:{}-{}:{}, mode={}",
             item.name,
             item.uri,
             item.range.start.line,
             item.range.start.character,
             item.range.end.line,
-            item.range.end.character
+            item.range.end.character,
+            if use_manual_hierarchy { "manual" } else { "lsp" }
         );
 
         // Get LSP client for the definition's language
@@ -510,7 +512,7 @@ impl Manager {
 
         // Use LSP's callHierarchy/incomingCalls request
         let result = locked_client
-            .call_hierarchy_incoming_calls(item.clone())
+            .call_hierarchy_incoming_calls(item.clone(), use_manual_hierarchy)
             .await
             .map_err(|e| {
                 error!("[IncomingCalls] Failed to get incoming calls: {}", e);
@@ -557,7 +559,7 @@ impl Manager {
 
         // Use LSP's callHierarchy/outgoingCalls request
         let result = locked_client
-            .call_hierarchy_outgoing_calls(item.clone())
+            .call_hierarchy_outgoing_calls(item.clone(), use_manual_hierarchy)
             .await
             .map_err(|e| {
                 error!("[OutgoingCalls] Failed to get outgoing calls: {}", e);
