@@ -13,6 +13,7 @@ pub mod typescript;
 pub mod rust;
 pub mod go;
 pub mod java;
+pub mod cpp;
 mod registry;
 
 pub fn get_call_hierarchy_handler(language: &str) -> Option<Box<dyn LanguageCallHierarchy>> {

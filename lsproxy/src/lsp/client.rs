@@ -1184,6 +1184,7 @@ pub trait LspClient: Send {
                         || parent.kind() == "method_definition"
                         || parent.kind() == "function_item"
                         || parent.kind() == "function_declaration"
+                        || parent.kind() == "function_declarator"
                     {
                         debug!("get_referenced_object: Found function/method definition");
                         // Use the parent node (full function) for the range and node_range
@@ -1216,6 +1217,7 @@ pub trait LspClient: Send {
             "function_definition"
             | "method_definition"
             | "function_declaration"
+            | "function_declarator"
             | "class_definition"
             | "class_declaration" => {
                 debug!(
