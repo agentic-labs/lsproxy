@@ -64,4 +64,12 @@ impl LanguageCallHierarchy for CppCallHierarchy {
         dir.join("Makefile").exists() ||
         dir.join("build").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "identifier" | "field_identifier" | "operator_name")
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "call_expression" | "field_expression")
+    }
 }

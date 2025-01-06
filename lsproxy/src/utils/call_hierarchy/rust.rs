@@ -60,4 +60,12 @@ impl LanguageCallHierarchy for RustCallHierarchy {
     fn is_package_root(&self, dir: &std::path::Path) -> bool {
         dir.join("Cargo.toml").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "identifier" | "field_identifier")
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        node_type == "call_expression"
+    }
 }

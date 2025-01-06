@@ -59,4 +59,12 @@ impl LanguageCallHierarchy for PythonCallHierarchy {
     fn is_package_root(&self, dir: &std::path::Path) -> bool {
         dir.join("__init__.py").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        node_type == "identifier"
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        node_type == "call"
+    }
 }

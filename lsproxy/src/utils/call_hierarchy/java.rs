@@ -72,4 +72,12 @@ impl LanguageCallHierarchy for JavaCallHierarchy {
         // Java projects typically have either pom.xml (Maven) or build.gradle (Gradle)
         dir.join("pom.xml").exists() || dir.join("build.gradle").exists() || dir.join("Main.java").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "identifier" | "type_identifier")
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "method_invocation" | "object_creation_expression")
+    }
 }

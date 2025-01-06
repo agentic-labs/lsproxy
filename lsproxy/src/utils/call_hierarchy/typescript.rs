@@ -82,4 +82,12 @@ impl LanguageCallHierarchy for TypeScriptCallHierarchy {
     fn is_package_root(&self, dir: &std::path::Path) -> bool {
         dir.join("package.json").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "identifier" | "property_identifier" | "type_identifier")
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "call_expression" | "new_expression")
+    }
 }

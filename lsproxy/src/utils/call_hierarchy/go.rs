@@ -76,4 +76,12 @@ impl LanguageCallHierarchy for GoCallHierarchy {
     fn is_package_root(&self, dir: &std::path::Path) -> bool {
         dir.join("go.mod").exists()
     }
+
+    fn is_identifier_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "identifier" | "field_identifier")
+    }
+
+    fn is_call_node(&self, node_type: &str) -> bool {
+        matches!(node_type, "call_expression" | "type_assertion_expression")
+    }
 }

@@ -942,6 +942,17 @@ pub trait LspClient: Send {
                             )
                             .await?
                         }
+                        GotoDefinitionResponse::Scalar(location) => {
+                            debug!("Found definition at {:?}", location);
+                            // Get package for definition file
+                            let def_pkg = self.get_narrowest_package(location.uri.path()).await?;
+                            // Get object at definition location
+                            self.get_referenced_object(
+                                &def_pkg,
+                                location.uri.path(),
+                                location.range.start,
+                            ).await?
+                        }
                         _ => {
                             debug!("No definition found for reference");
                             None
@@ -1113,7 +1124,8 @@ pub trait LspClient: Send {
         // Create an Object for the node we found
         let obj = match initial_node.kind() {
             // If we're on an identifier that's being called (function reference)
-            "identifier" | "property_identifier" | "field_identifier" | "self" => {
+            node_type if handler.is_identifier_node(node_type) => {           
+            
                 let name = source[initial_node.byte_range()].to_string();
                 debug!("get_referenced_object: Found function reference: {}", name);
 
@@ -1131,10 +1143,7 @@ pub trait LspClient: Send {
                         "get_referenced_object: Walking up tree, current node: {}",
                         parent.kind()
                     );
-                    if parent.kind() == "call_expression"
-                        || parent.kind() == "call"
-                        || parent.kind() == "method_invocation"
-                    {
+                    if handler.is_call_node(parent.kind()) {
                         found_call = true;
                         debug!(
                             "get_referenced_object: Found call expression with type: {}",

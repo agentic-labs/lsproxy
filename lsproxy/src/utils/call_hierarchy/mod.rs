@@ -6,6 +6,8 @@ pub trait LanguageCallHierarchy {
     fn determine_symbol_kind(&self, node_type: &str, node_text: &str) -> lsp_types::SymbolKind;
     fn configure_parser(&self, parser: &mut tree_sitter::Parser) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     fn is_package_root(&self, dir: &std::path::Path) -> bool;
+    fn is_identifier_node(&self, node_type: &str) -> bool;
+    fn is_call_node(&self, node_type: &str) -> bool;
 }
 
 pub mod python;
@@ -14,6 +16,7 @@ pub mod rust;
 pub mod go;
 pub mod java;
 pub mod cpp;
+pub mod php;
 mod registry;
 
 pub fn get_call_hierarchy_handler(language: &str) -> Option<Box<dyn LanguageCallHierarchy>> {
