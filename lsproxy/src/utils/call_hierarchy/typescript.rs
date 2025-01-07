@@ -5,6 +5,24 @@ use tree_sitter_typescript;
 pub struct TypeScriptCallHierarchy {}
 
 impl LanguageCallHierarchy for TypeScriptCallHierarchy {
+    fn get_call_name_node<'a>(&self, call_node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match call_node.kind() {
+            // Regular function calls
+            "call_expression" => {
+                let func = call_node.child_by_field_name("function")?;
+                if func.kind() == "member_expression" {
+                    func.child_by_field_name("property")
+                } else {
+                    Some(func)
+                }
+            },
+            // Constructor calls
+            "new_expression" => call_node.child_by_field_name("constructor"),
+            // Generic fallback
+            _ => None
+        }
+    }
+
     fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
         match node.kind() {
             "public" | "private" | "protected" | "static" | "readonly" | "async" => {

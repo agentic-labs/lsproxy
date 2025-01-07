@@ -8,6 +8,13 @@ use std::sync::Arc;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Point, Query, QueryCursor, Tree};
 
+fn convert_point_to_position(point: Point) -> Position {
+    Position {
+        line: point.row as u32,
+        character: point.column as u32,
+    }
+}
+
 // Types for manual call hierarchy implementation
 #[derive(Debug, Clone)]
 pub struct Package {
@@ -611,85 +618,98 @@ pub trait LspClient: Send {
             }
         } else {
             debug!("call_hierarchy_outgoing_calls: Using manual implementation");
-            // First get the function definition object
-            let func_obj = self
-                .get_referenced_object(
-                    &Package {
-                        path: item.uri.path().to_string(),
-                    },
-                    item.uri.path(),
-                    item.selection_range.start,
-                )
-                .await?;
-
             let mut outgoing_calls = Vec::new();
-            if let Some(func_obj) = func_obj {
-                // Find all function calls within this function's body
-                let call_ranges = self.find_function_calls(&func_obj).await?;
+
+            // Get the object at the position
+            let obj = self.get_referenced_object(
+                &Package {
+                    path: item.uri.path().to_string(),
+                },
+                item.uri.path(),
+                Position {
+                    line: item.range.start.line,
+                    character: item.range.start.character,
+                },
+            ).await?;
+
+            if let Some(obj) = obj {
+                // Parse the source code and find all function calls within this function
+                let mut parser = Parser::new();
+                let language = detect_language_string(obj.file_path.as_str())?;
+                let handler = crate::utils::call_hierarchy::get_call_hierarchy_handler(&language)
+                    .ok_or("Language not supported")?;
+                handler.configure_parser(&mut parser)?;
+
+                let tree = parser.parse(obj.source.as_bytes(), None).unwrap();
+                let source_bytes = obj.source.as_bytes();
+
+                // Find the method node
+                let method_node = tree.root_node().descendant_for_byte_range(
+                    obj.node_range.0,
+                    obj.node_range.1
+                ).unwrap();
                 debug!(
-                    "call_hierarchy_outgoing_calls: Found {} potential calls",
-                    call_ranges.len()
+                    "call_hierarchy_outgoing_calls: Found method node: kind={}, text={:?}",
+                    method_node.kind(),
+                    method_node.utf8_text(source_bytes).unwrap_or("<invalid utf8>")
                 );
 
-                for call_range in call_ranges {
-                    // For each call, get its definition
-                    if let Some(obj) = self
-                        .get_referenced_object(
-                            &Package {
-                                path: item.uri.path().to_string(),
-                            },
-                            item.uri.path(),
-                            call_range.start,
-                        )
-                        .await?
-                    {
-                        if obj.is_reference {
-                            // It's a call to another function
-                            // Try to find the actual definition
-                            let def_response = self
-                                .text_document_definition(item.uri.path(), call_range.start)
-                                .await?;
+                // Use the language-specific handler to find calls in method body
+                let calls = handler.find_calls_in_method_body(&method_node, source_bytes);
+                debug!(
+                    "call_hierarchy_outgoing_calls: Found {} potential calls in method body",
+                    calls.len()
+                );
 
-                            if let GotoDefinitionResponse::Array(locations) = def_response {
-                                if let Some(def_loc) = locations.first() {
-                                    if let Some(def_obj) = self
-                                        .get_referenced_object(
-                                            &Package {
-                                                path: def_loc.uri.path().to_string(),
-                                            },
-                                            def_loc.uri.path(),
-                                            def_loc.range.start,
-                                        )
-                                        .await?
-                                    {
-                                        debug!(
-                                            "call_hierarchy_outgoing_calls: Found call to {} in {}",
-                                            def_obj.name, def_obj.file_path
-                                        );
-                                        outgoing_calls.push(CallHierarchyOutgoingCall {
-                                            to: CallHierarchyItem {
-                                                name: def_obj.name.clone(),
-                                                kind: lsp_types::SymbolKind::FUNCTION,
-                                                tags: None,
-                                                detail: Some(format!(
-                                                    "{} • {}",
-                                                    def_obj.package_path,
-                                                    std::path::Path::new(&def_obj.file_path)
-                                                        .file_name()
-                                                        .unwrap()
-                                                        .to_string_lossy()
-                                                )),
-                                                uri: Url::from_file_path(&def_obj.file_path)
-                                                    .unwrap(),
-                                                range: def_obj.range,
-                                                selection_range: def_obj.range,
-                                                data: None,
-                                            },
-                                            from_ranges: vec![call_range],
-                                        });
-                                    }
-                                }
-                            }
+                for call_node in calls {
+                    // Get the name node for the call using language-specific handler
+                    let name_node = handler.get_call_name_node(&call_node);
+
+                    if let Some(name_node) = name_node {
+                        let call_name = name_node
+                            .utf8_text(source_bytes)
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        // Find the definition of this call
+                        let call_obj = self.get_referenced_object(
+                            &Package {
+                                path: obj.file_path.clone(),
+                            },
+                            obj.file_path.as_str(),
+                            convert_point_to_position(name_node.start_position()),
+                        ).await?;
+
+                        if let Some(call_obj) = call_obj {
+                            debug!(
+                                "call_hierarchy_outgoing_calls: Found call to {} in {}",
+                                call_name, call_obj.file_path
+                            );
+
+                            // Create a CallHierarchyItem for the called function
+                            let to = CallHierarchyItem {
+                                name: call_name,
+                                kind: lsp_types::SymbolKind::FUNCTION,
+                                tags: None,
+                                detail: Some(format!(
+                                    "{} • {}",
+                                    call_obj.package_path,
+                                    call_obj.file_path
+                                )),
+                                uri: Url::from_file_path(&call_obj.file_path).unwrap(),
+                                range: call_obj.range,
+                                selection_range: call_obj.range,
+                                data: None,
+                            };
+
+                            // Add the call with its location
+                            outgoing_calls.push(CallHierarchyOutgoingCall {
+                                to,
+                                from_ranges: vec![Range {
+                                    start: convert_point_to_position(call_node.start_position()),
+                                    end: convert_point_to_position(call_node.end_position()),
+                                }],
+                            });
                         }
                     }
                 }

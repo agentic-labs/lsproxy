@@ -5,6 +5,17 @@ use tree_sitter_java;
 pub struct JavaCallHierarchy {}
 
 impl LanguageCallHierarchy for JavaCallHierarchy {
+    fn get_call_name_node<'a>(&self, call_node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match call_node.kind() {
+            // Method invocations
+            "method_invocation" => call_node.child_by_field_name("name"),
+            // Constructor calls
+            "object_creation_expression" => call_node.child_by_field_name("type"),
+            // Generic fallback
+            _ => None
+        }
+    }
+
     fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
         match node.kind() {
             "public" | "private" | "protected" | "static" | "final" => {

@@ -5,6 +5,24 @@ use tree_sitter_python;
 pub struct PythonCallHierarchy {}
 
 impl LanguageCallHierarchy for PythonCallHierarchy {
+    fn get_call_name_node<'a>(&self, call_node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match call_node.kind() {
+            // Function and method calls
+            "call" => {
+                let func = call_node.child_by_field_name("function")?;
+                if func.kind() == "attribute" {
+                    // Method call (obj.method())
+                    func.child_by_field_name("attribute")
+                } else {
+                    // Regular function call
+                    Some(func)
+                }
+            },
+            // Generic fallback
+            _ => None
+        }
+    }
+
     fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
         match node.kind() {
             "decorator" => {
