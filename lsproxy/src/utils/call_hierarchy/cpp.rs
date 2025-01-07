@@ -5,6 +5,26 @@ use tree_sitter_cpp;
 pub struct CppCallHierarchy {}
 
 impl LanguageCallHierarchy for CppCallHierarchy {
+    fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        let mut current = *node;
+        while let Some(parent) = current.parent() {
+            match parent.kind() {
+                "function_definition" => return Some(parent),
+                "function_declarator" => {
+                    // For class methods, we need to find the function_definition parent
+                    if let Some(grandparent) = parent.parent() {
+                        if grandparent.kind() == "function_definition" {
+                            return Some(grandparent);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn get_function_call_query(&self) -> &'static str {
         r#"
         [
@@ -26,6 +46,10 @@ impl LanguageCallHierarchy for CppCallHierarchy {
           (function_definition
             declarator: (function_declarator
               declarator: (operator_name) @func_name))
+          (function_definition
+            declarator: (function_declarator
+              declarator: (qualified_identifier
+                name: (identifier) @func_name)))
         ] @func_decl
         "#
     }
@@ -66,9 +90,12 @@ impl LanguageCallHierarchy for CppCallHierarchy {
             "function_definition" |
             "function_declarator" |
             "template_declaration" |
+            // Method-specific
+            "method_definition" |
             // Calls
             "call_expression" |
-            "field_expression"
+            "field_expression" |
+            "qualified_call_expression"
         )
     }
 
