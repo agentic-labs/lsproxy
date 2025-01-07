@@ -5,6 +5,26 @@ use tree_sitter_java;
 pub struct JavaCallHierarchy {}
 
 impl LanguageCallHierarchy for JavaCallHierarchy {
+    fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match node.kind() {
+            "public" | "private" | "protected" | "static" | "final" => {
+                // For Java method declarations, navigate to the method name
+                let parent = node.parent()?;
+                if parent.kind() == "method_declaration" || parent.kind() == "constructor_declaration" {
+                    // Find the identifier node within the method declaration
+                    for child in 0..parent.child_count() {
+                        if let Some(child_node) = parent.child(child) {
+                            if child_node.kind() == "identifier" {
+                                return Some(child_node);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Some(node.clone())
+    }
     fn get_function_call_query(&self) -> &'static str {
         r#"
         ; Method calls (including on local variables)
@@ -42,13 +62,6 @@ impl LanguageCallHierarchy for JavaCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(
-            node_type,
-            "method_declaration" | "constructor_declaration" | "method_invocation" | "object_creation_expression"
-        )
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(method_declaration | constructor_declaration | class_declaration | interface_declaration) @cap"
     }
@@ -77,7 +90,27 @@ impl LanguageCallHierarchy for JavaCallHierarchy {
         matches!(node_type, "identifier" | "type_identifier")
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        matches!(node_type, "method_invocation" | "object_creation_expression")
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            // Definitions
+            "method_declaration" |
+            "constructor_declaration" |
+            // Calls
+            "method_invocation" |
+            "object_creation_expression" |
+            // Lambda expressions
+            "lambda_expression"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "method_declaration" |
+            "constructor_declaration" |
+            "class_declaration" |  // included because it can contain methods
+            "interface_declaration" |  // included because it can contain method signatures
+            "enum_declaration" |  // enums can have methods too
+            "annotation_type_declaration"  // annotations can have default methods
+        )
     }
 }

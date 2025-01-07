@@ -5,6 +5,33 @@ use tree_sitter_python;
 pub struct PythonCallHierarchy {}
 
 impl LanguageCallHierarchy for PythonCallHierarchy {
+    fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match node.kind() {
+            "decorator" => {
+                // For Python decorators, navigate to the decorated function name
+                let parent = node.parent()?;
+                if parent.kind() == "decorated_definition" {
+                    // Find the function_definition within the decorated_definition
+                    for child in 0..parent.child_count() {
+                        if let Some(child_node) = parent.child(child) {
+                            if child_node.kind() == "function_definition" {
+                                // Find the identifier within the function_definition
+                                for func_child in 0..child_node.child_count() {
+                                    if let Some(func_child_node) = child_node.child(func_child) {
+                                        if func_child_node.kind() == "identifier" {
+                                            return Some(func_child_node);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Some(node.clone())
+    }
     fn get_function_call_query(&self) -> &'static str {
         r#"
             ; Any function or method call
@@ -35,10 +62,6 @@ impl LanguageCallHierarchy for PythonCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(node_type, "function_definition")
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(function_definition | class_definition) @cap"
     }
@@ -64,7 +87,21 @@ impl LanguageCallHierarchy for PythonCallHierarchy {
         node_type == "identifier"
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        node_type == "call"
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            // Definitions
+            "function_definition" |
+            "lambda" |
+            // Calls
+            "call"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "function_definition" |
+            "class_definition" |  // included because it can contain method definitions
+            "decorated_definition"  // for decorated functions/classes
+        )
     }
 }

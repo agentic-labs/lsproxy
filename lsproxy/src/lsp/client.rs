@@ -964,7 +964,7 @@ pub trait LspClient: Send {
 
                 // Now verify the definition is a function and use it for the hierarchy item
                 if let Some(def_obj) = definition_obj {
-                    if !self.is_function_type(&def_obj) {
+                    if !self.is_callable_definition(&def_obj) {
                         debug!("Definition is not a function type, returning empty result");
                         return Ok(vec![]);
                     }
@@ -1104,10 +1104,20 @@ pub trait LspClient: Send {
         debug!("get_referenced_object: Target column: {}", point.column);
 
         // Find the most specific named node at the position
-        let initial_node = tree
+        let raw_node = tree
             .root_node()
             .named_descendant_for_point_range(point, point)
             .ok_or("No node found at position")?;
+            
+        // Use language-specific node navigation if needed
+        debug!(
+            "get_referenced_object: Attempting language-specific node navigation for node kind: {}",
+            raw_node.kind()
+        );
+        let initial_node = handler.get_definition_node_at_position(&raw_node).unwrap_or_else(|| {
+            debug!("get_referenced_object: No language-specific navigation needed, using raw node");
+            raw_node
+        });
 
         debug!(
             "get_referenced_object: Found node: kind={}, text={:?}",
@@ -1140,19 +1150,24 @@ pub trait LspClient: Send {
 
                 while let Some(parent) = current.parent() {
                     debug!(
-                        "get_referenced_object: Walking up tree, current node: {}",
-                        parent.kind()
+                        "get_referenced_object: Walking up tree, current node: {} with text '{}'",
+                        parent.kind(),
+                        source[parent.byte_range()].to_string()
                     );
-                    if handler.is_call_node(parent.kind()) {
+                    debug!(
+                        "get_referenced_object: Checking if '{}' is callable: {}, is definition: {}",
+                        parent.kind(),
+                        handler.is_callable_type(parent.kind()),
+                        handler.is_definition(parent.kind())
+                    );
+                    if handler.is_callable_type(parent.kind()) && !handler.is_definition(parent.kind()) {
                         found_call = true;
                         debug!(
                             "get_referenced_object: Found call expression with type: {}",
                             parent.kind()
                         );
                         break;
-                    } else if parent.kind() == "function_item"
-                        || parent.kind() == "function_declaration"
-                    {
+                    } else if handler.is_callable_type(parent.kind()) && handler.is_definition(parent.kind()) {
                         found_function = true;
                         debug!("get_referenced_object: Found function definition");
                         break;
@@ -1189,12 +1204,7 @@ pub trait LspClient: Send {
                         is_reference: found_call,
                     })
                 } else if let Some(parent) = initial_node.parent() {
-                    if parent.kind() == "function_definition"
-                        || parent.kind() == "method_definition"
-                        || parent.kind() == "function_item"
-                        || parent.kind() == "function_declaration"
-                        || parent.kind() == "function_declarator"
-                    {
+                    if handler.is_definition(parent.kind()) {
                         debug!("get_referenced_object: Found function/method definition");
                         // Use the parent node (full function) for the range and node_range
                         Some(Object {
@@ -1223,12 +1233,7 @@ pub trait LspClient: Send {
                 }
             }
             // If we're directly on a definition node
-            "function_definition"
-            | "method_definition"
-            | "function_declaration"
-            | "function_declarator"
-            | "class_definition"
-            | "class_declaration" => {
+            node_type if handler.is_definition(node_type) => {
                 debug!(
                     "get_referenced_object: Directly on a definition node: {}",
                     initial_node.kind()
@@ -1287,7 +1292,7 @@ pub trait LspClient: Send {
         Ok(obj)
     }
 
-    fn is_function_type(&self, obj: &Object) -> bool {
+    fn is_callable_definition(&self, obj: &Object) -> bool {
         // Get the node from the tree at the object's range
         let tree = &obj.tree;
         let node = tree
@@ -1299,7 +1304,7 @@ pub trait LspClient: Send {
         debug!("checking node kind for node: {:?}", node);
         if let Ok(lang) = detect_language_string(&obj.file_path) {
             if let Some(handler) = crate::utils::call_hierarchy::get_call_hierarchy_handler(&lang) {
-                return handler.is_function_type(node.kind());
+                return handler.is_callable_type(node.kind()) && handler.is_definition(node.kind());
             }
         }
         false

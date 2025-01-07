@@ -50,19 +50,13 @@ impl LanguageCallHierarchy for GoCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(
-            node_type,
-            "function_declaration" | "method_declaration" | "call_expression" | "function_definition"
-        )
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(function_declaration | method_declaration) @cap"
     }
 
     fn determine_symbol_kind(&self, node_type: &str, _node_text: &str) -> SymbolKind {
         match node_type {
+            "type_spec" => SymbolKind::CLASS,  // Go's struct/interface types
             "method_declaration" => SymbolKind::METHOD,
             _ => SymbolKind::FUNCTION,
         }
@@ -81,7 +75,25 @@ impl LanguageCallHierarchy for GoCallHierarchy {
         matches!(node_type, "identifier" | "field_identifier")
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        matches!(node_type, "call_expression" | "type_assertion_expression")
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            // Definitions
+            "function_declaration" |
+            "method_declaration" |
+            // Calls
+            "call_expression" |
+            "type_assertion_expression" |
+            // Function literals (anonymous functions)
+            "function_literal"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "function_declaration" |
+            "method_declaration" |
+            "type_spec" |  // struct/interface definitions can contain methods
+            "function_literal"  // anonymous functions
+        )
     }
 }

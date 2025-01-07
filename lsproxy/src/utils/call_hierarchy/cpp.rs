@@ -30,15 +30,6 @@ impl LanguageCallHierarchy for CppCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(
-            node_type,
-            "function_definition" | 
-            "function_declarator" | 
-            "template_declaration"
-        )
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(function_definition | class_specifier) @cap"
     }
@@ -69,7 +60,28 @@ impl LanguageCallHierarchy for CppCallHierarchy {
         matches!(node_type, "identifier" | "field_identifier" | "operator_name")
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        matches!(node_type, "call_expression" | "field_expression")
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            // Definitions and declarations
+            "function_definition" |
+            "function_declarator" |
+            "template_declaration" |
+            // Calls
+            "call_expression" |
+            "field_expression"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "function_definition" |
+            "class_specifier" |  // included because it can contain method definitions
+            "template_declaration"
+        )
+    }
+
+    fn is_declaration(&self, node_type: &str) -> bool {
+        // C++ distinguishes between declarations and definitions
+        node_type == "function_declarator"
     }
 }

@@ -5,6 +5,24 @@ use tree_sitter_php;
 pub struct PhpCallHierarchy {}
 
 impl LanguageCallHierarchy for PhpCallHierarchy {
+    fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        if node.kind() == "visibility_modifier" {
+            // For PHP method declarations, navigate to the method name
+            let parent = node.parent()?;
+            if parent.kind() == "method_declaration" {
+                // Find the name node within the method declaration
+                for child in 0..parent.child_count() {
+                    if let Some(child_node) = parent.child(child) {
+                        if child_node.kind() == "name" {
+                            return Some(child_node);
+                        }
+                    }
+                }
+            }
+        }
+        Some(node.clone())
+    }
+
     fn get_function_call_query(&self) -> &'static str {
         r#"
             ; Function calls
@@ -33,10 +51,6 @@ impl LanguageCallHierarchy for PhpCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(node_type, "function_definition" | "method_declaration")
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(function_definition | method_declaration | class_declaration) @cap"
     }
@@ -62,7 +76,23 @@ impl LanguageCallHierarchy for PhpCallHierarchy {
         node_type == "name"
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        matches!(node_type, "function_call_expression" | "member_call_expression" | "scoped_call_expression")
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type, 
+            // Definitions
+            "function_definition" | 
+            "method_declaration" |
+            // Calls
+            "function_call_expression" |
+            "member_call_expression" |
+            "scoped_call_expression"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "function_definition" |
+            "method_declaration" |
+            "class_declaration"  // included because it can contain method definitions
+        )
     }
 }

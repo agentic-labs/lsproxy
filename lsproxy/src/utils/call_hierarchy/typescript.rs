@@ -5,6 +5,26 @@ use tree_sitter_typescript;
 pub struct TypeScriptCallHierarchy {}
 
 impl LanguageCallHierarchy for TypeScriptCallHierarchy {
+    fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+        match node.kind() {
+            "public" | "private" | "protected" | "static" | "readonly" | "async" => {
+                // For TypeScript method declarations, navigate to the method name
+                let parent = node.parent()?;
+                if parent.kind() == "method_definition" {
+                    // Find the name node within the method definition
+                    for child in 0..parent.child_count() {
+                        if let Some(child_node) = parent.child(child) {
+                            if matches!(child_node.kind(), "property_identifier" | "identifier") {
+                                return Some(child_node);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Some(node.clone())
+    }
     fn get_function_call_query(&self) -> &'static str {
         r#"
             ; Regular function calls
@@ -55,13 +75,6 @@ impl LanguageCallHierarchy for TypeScriptCallHierarchy {
         "#
     }
 
-    fn is_function_type(&self, node_type: &str) -> bool {
-        matches!(
-            node_type,
-            "function_declaration" | "method_definition" | "arrow_function"
-        )
-    }
-
     fn get_enclosing_function_pattern(&self) -> &'static str {
         "(function_declaration | method_definition | class_declaration) @cap"
     }
@@ -87,7 +100,25 @@ impl LanguageCallHierarchy for TypeScriptCallHierarchy {
         matches!(node_type, "identifier" | "property_identifier" | "type_identifier")
     }
 
-    fn is_call_node(&self, node_type: &str) -> bool {
-        matches!(node_type, "call_expression" | "new_expression")
+    fn is_callable_type(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            // Definitions
+            "function_declaration" |
+            "method_definition" |
+            "arrow_function" |
+            // Calls
+            "call_expression" |
+            "new_expression"
+        )
+    }
+
+    fn is_definition(&self, node_type: &str) -> bool {
+        matches!(node_type,
+            "function_declaration" |
+            "method_definition" |
+            "class_declaration" |  // included because it can contain method definitions
+            "arrow_function" |
+            "variable_declarator"  // for arrow functions assigned to variables
+        )
     }
 }
