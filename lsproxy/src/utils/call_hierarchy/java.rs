@@ -8,9 +8,19 @@ impl LanguageCallHierarchy for JavaCallHierarchy {
     fn get_call_name_node<'a>(&self, call_node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
         match call_node.kind() {
             // Method invocations
-            "method_invocation" => call_node.child_by_field_name("name"),
+            "method_invocation" => {
+                // Try to get the name directly
+                call_node.child_by_field_name("name")
+                    .or_else(|| {
+                        // If no direct name, try to get it from the object
+                        call_node.child_by_field_name("object")
+                            .and_then(|obj| obj.child_by_field_name("name"))
+                    })
+            },
             // Constructor calls
             "object_creation_expression" => call_node.child_by_field_name("type"),
+            // Field access
+            "field_access" => call_node.child_by_field_name("field"),
             // Generic fallback
             _ => None
         }
@@ -18,6 +28,35 @@ impl LanguageCallHierarchy for JavaCallHierarchy {
 
     fn get_definition_node_at_position<'a>(&self, node: &'a tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
         match node.kind() {
+            "expression_statement" => {
+                // For expression statements, try to get the method invocation
+                if let Some(method_call) = node.child(0) {
+                    if method_call.kind() == "method_invocation" {
+                        // For a direct method call, get the identifier
+                        if let Some(identifier) = method_call.child_by_field_name("name") {
+                            return Some(identifier);
+                        }
+                    }
+                }
+                Some(node.clone());
+            },
+            "block" => {
+                // For blocks, find the most specific node at our position
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "expression_statement" {
+                        if let Some(method_call) = child.child(0) {
+                            if method_call.kind() == "method_invocation" {
+                                // For a direct method call, get the identifier
+                                if let Some(identifier) = method_call.child_by_field_name("name") {
+                                    return Some(identifier);
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(node.clone());
+            },
             "public" | "private" | "protected" | "static" | "final" => {
                 // For Java method declarations, navigate to the method name
                 let parent = node.parent()?;

@@ -1124,10 +1124,33 @@ pub trait LspClient: Send {
         debug!("get_referenced_object: Target column: {}", point.column);
 
         // Find the most specific named node at the position
-        let raw_node = tree
+        let mut raw_node = tree
             .root_node()
             .named_descendant_for_point_range(point, point)
             .ok_or("No node found at position")?;
+
+        // If we're not on the right line, try to find a node specifically on our line
+        if raw_node.start_position().row != pos.line as usize {
+            debug!(
+                "get_referenced_object: Node at wrong line (found {}, want {}), searching for correct node",
+                raw_node.start_position().row,
+                pos.line
+            );
+            let mut cursor = tree.walk();
+            for node in raw_node.children(&mut cursor) {
+                if node.start_position().row == pos.line as usize {
+                    if let Some(method_call) = node.descendant_for_point_range(point, point) {
+                        debug!(
+                            "get_referenced_object: Found node at correct line: kind={}, text={:?}",
+                            method_call.kind(),
+                            source[method_call.byte_range()].to_string()
+                        );
+                        raw_node = method_call;
+                        break;
+                    }
+                }
+            }
+        }
             
         // Use language-specific node navigation if needed
         debug!(
