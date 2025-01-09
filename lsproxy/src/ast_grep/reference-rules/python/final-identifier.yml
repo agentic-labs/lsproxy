@@ -1,0 +1,27 @@
+id: final-identifier
+language: python
+rule:
+  kind: identifier
+  pattern: $NAME
+  not:
+    any:
+      - inside:
+          kind: assignment
+          field: left
+      - inside:
+          kind: attribute
+          field: attribute
+          inside:
+            kind: call
+      - inside:
+          kind: attribute
+          field: object
+      - inside:
+          any:
+          - kind: attribute
+            inside:
+              kind: attribute
+          - kind: call
+          - kind: decorator
+          - kind: function_definition
+          - kind: parameters

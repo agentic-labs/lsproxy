@@ -1,0 +1,7 @@
+id: decorator
+language: python
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    kind: decorator

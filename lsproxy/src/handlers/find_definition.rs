@@ -245,44 +245,7 @@ mod test {
         let bytes = actix_web::body::to_bytes(body).await.unwrap();
         let definition_response: DefinitionResponse = serde_json::from_slice(&bytes).unwrap();
 
-        let expected_response = DefinitionResponse {
-            raw_response: None,
-            definitions: vec![FilePosition {
-                path: String::from("graph.py"),
-                position: Position {
-                    line: 1,
-                    character: 6,
-                },
-            }],
-            source_code_context: Some(vec![CodeContext {
-                range: FileRange {
-                    path: String::from("graph.py"),
-                    start: Position {
-                        line: 1,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 60,
-                        character: 40,
-                    },
-                },
-                source_code: String::from("class AStarGraph(object):\n    # Define a class board like grid with two barriers\n\n    def __init__(self):\n        self.barriers = []\n        self.barriers.append(\n            [\n                (2, 4),\n                (2, 5),\n                (2, 6),\n                (3, 6),\n                (4, 6),\n                (5, 6),\n                (5, 5),\n                (5, 4),\n                (5, 3),\n                (5, 2),\n                (4, 2),\n                (3, 2),\n            ]\n        )\n\n    @property\n    def barriers(self):\n        return self.barriers\n\n    def heuristic(self, start, goal):\n        # Use Chebyshev distance heuristic if we can move one square either\n        # adjacent or diagonal\n        D = 1\n        D2 = 1\n        dx = abs(start[0] - goal[0])\n        dy = abs(start[1] - goal[1])\n        return D * (dx + dy) + (D2 - 2 * D) * min(dx, dy)\n\n    def get_vertex_neighbours(self, pos):\n        n = []\n        # Moves allow link a chess king\n        for dx, dy in [\n            (1, 0),\n            (-1, 0),\n            (0, 1),\n            (0, -1),\n            (1, 1),\n            (-1, 1),\n            (1, -1),\n            (-1, -1),\n        ]:\n            x2 = pos[0] + dx\n            y2 = pos[1] + dy\n            if x2 < 0 or x2 > 7 or y2 < 0 or y2 > 7:\n                continue\n            n.append((x2, y2))\n        return n\n\n    def move_cost(self, a, b):\n        for barrier in self.barriers:\n            if b in barrier:\n                return 100  # Extremely high cost to enter barrier squares\n        return 1  # Normal movement cost"),
-            }]),
-            selected_identifier: Identifier {
-                name: String::from("AStarGraph"),
-                range: FileRange {
-                    path: String::from("main.py"),
-                    start: Position {
-                        line: 1,
-                        character: 18,
-                    },
-                    end: Position {
-                        line: 1,
-                        character: 28,
-                    },
-                },
-            },
-        };
+        let expected_response = DefinitionResponse { raw_response: None, definitions: vec![FilePosition { path: String::from("graph.py"), position: Position { line: 12, character: 6 } }], source_code_context: Some(vec![CodeContext { range: FileRange { path: String::from("graph.py"), start: Position { line: 12, character: 0 }, end: Position { line: 88, character: 16 } }, source_code: String::from("class AStarGraph(GraphBase):\n    def __init__(self):\n        self._barriers: List[List[Tuple[int, int]]] = []\n        self._barriers.append([\n            (2, 4), (2, 5), (2, 6),\n            (3, 6), (4, 6), (5, 6),\n            (5, 5), (5, 4), (5, 3),\n            (5, 2), (4, 2), (3, 2),\n        ])\n\n    @property\n    def barriers(self):\n        return self._barriers\n\n    def _barrier_cost(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:\n        \"\"\"Original barrier-based cost calculation\"\"\"\n        for barrier in self.barriers:\n            if b in barrier:\n                return 100\n        return 1\n\n    def _distance_cost(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:\n        \"\"\"Cost based on Manhattan distance between points\"\"\"\n        return abs(b[0] - a[0]) + abs(b[1] - a[1])\n\n    def _combined_cost(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:\n        \"\"\"Combines barrier and distance costs\"\"\"\n        barrier_cost = self._barrier_cost(a, b)\n        distance_cost = self._distance_cost(a, b)\n        return barrier_cost * distance_cost\n\n    def move_cost(self, a: Tuple[int, int], b: Tuple[int, int], \n                 strategy: CostStrategy = CostStrategy.BARRIER) -> float:\n        \"\"\"\n        Calculate movement cost between two points using specified strategy.\n        \n        Args:\n            a: Starting position\n            b: Ending position\n            strategy: Cost calculation strategy to use\n            \n        Returns:\n            float: Cost of movement\n        \"\"\"\n        if strategy == CostStrategy.BARRIER:\n            cost_function = self._barrier_cost\n        elif strategy == CostStrategy.DISTANCE:\n            cost_function = self._distance_cost\n        elif strategy == CostStrategy.COMBINED:\n            cost_function = self._combined_cost\n        else:\n            raise ValueError(f\"Unknown cost strategy: {strategy}\")\n        \n        return cost_function(a, b)\n\n    @log_execution_time\n    def heuristic(self, start, goal):\n        D = 1\n        D2 = 1\n        dx = abs(start[0] - goal[0])\n        dy = abs(start[1] - goal[1])\n        return D * (dx + dy) + (D2 - 2 * D) * min(dx, dy)\n\n    @log_execution_time\n    def get_vertex_neighbours(self, pos, cost_strategy: CostStrategy = CostStrategy.BARRIER):\n        n = []\n        for dx, dy in [\n            (1, 0), (-1, 0), (0, 1), (0, -1),\n            (1, 1), (-1, 1), (1, -1), (-1, -1),\n        ]:\n            x2 = pos[0] + dx\n            y2 = pos[1] + dy\n            if x2 < 0 or x2 > 7 or y2 < 0 or y2 > 7:\n                continue\n            if self.move_cost(pos, (x2, y2), strategy=cost_strategy) < 100:\n                n.append((x2, y2))\n        return n") }]), selected_identifier: Identifier { name: String::from("AStarGraph"), range: FileRange { path: String::from("main.py"), start: Position { line: 1, character: 18 }, end: Position { line: 1, character: 28 } } } };
 
         assert_eq!(definition_response, expected_response);
         Ok(())

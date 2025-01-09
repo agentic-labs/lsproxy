@@ -74,7 +74,13 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
     let mut workspace_files: Vec<String> = response.json().expect("Failed to parse JSON");
 
     // Check if the expected files are present
-    let mut expected_files = vec!["graph.py", "main.py", "search.py", "__init__.py"];
+    let mut expected_files = vec![
+        "decorators.py",
+        "graph.py",
+        "main.py",
+        "search.py",
+        "__init__.py",
+    ];
     assert_eq!(
         workspace_files.len(),
         expected_files.len(),
@@ -98,13 +104,13 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::from_value(response.json().expect("Failed to parse JSON"))?;
     let expected = vec![
         Symbol {
-            name: String::from("graph"),
-            kind: String::from("variable"),
+            name: String::from("plot_path"),
+            kind: String::from("function"),
             identifier_position: FilePosition {
                 path: String::from("main.py"),
                 position: Position {
-                    line: 5,
-                    character: 0,
+                    line: 6,
+                    character: 4,
                 },
             },
             range: FileRange {
@@ -114,52 +120,30 @@ fn test_server_integration_python() -> Result<(), Box<dyn std::error::Error>> {
                     character: 0,
                 },
                 end: Position {
-                    line: 5,
-                    character: 20,
+                    line: 12,
+                    character: 14,
                 },
             },
         },
         Symbol {
-            name: String::from("result"),
-            kind: String::from("variable"),
+            name: String::from("main"),
+            kind: String::from("function"),
             identifier_position: FilePosition {
                 path: String::from("main.py"),
                 position: Position {
-                    line: 6,
-                    character: 0,
+                    line: 14,
+                    character: 4,
                 },
             },
             range: FileRange {
                 path: String::from("main.py"),
                 start: Position {
-                    line: 6,
+                    line: 14,
                     character: 0,
                 },
                 end: Position {
-                    line: 6,
-                    character: 51,
-                },
-            },
-        },
-        Symbol {
-            name: String::from("cost"),
-            kind: String::from("variable"),
-            identifier_position: FilePosition {
-                path: String::from("main.py"),
-                position: Position {
-                    line: 6,
-                    character: 8,
-                },
-            },
-            range: FileRange {
-                path: String::from("main.py"),
-                start: Position {
-                    line: 6,
-                    character: 0,
-                },
-                end: Position {
-                    line: 6,
-                    character: 51,
+                    line: 19,
+                    character: 28,
                 },
             },
         },

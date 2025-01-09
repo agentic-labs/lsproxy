@@ -3,8 +3,10 @@ use actix_web::HttpResponse;
 use log::{error, info};
 use lsp_types::{Location, Position as LspPosition};
 
-use crate::api_types::{CodeContext, ErrorResponse, FilePosition, FileRange, Position};
-use crate::api_types::{GetReferencesRequest, ReferencesResponse};
+use crate::api_types::{
+    CodeContext, ErrorResponse, FilePosition, FileRange, GetReferencesRequest, Position,
+    ReferencesResponse,
+};
 use crate::handlers::utils;
 use crate::lsp::manager::{LspManagerError, Manager};
 use crate::utils::file_utils::uri_to_relative_path_string;
@@ -255,7 +257,7 @@ mod test {
     use actix_web::http::StatusCode;
     use tokio::time::{sleep, Duration};
 
-    use crate::api_types::{FilePosition, Position};
+    use crate::api_types::{FilePosition, Identifier, Position};
     use crate::initialize_app_state;
     use crate::test_utils::{python_sample_path, rust_sample_path, TestContext};
 
@@ -268,7 +270,7 @@ mod test {
             identifier_position: FilePosition {
                 path: String::from("graph.py"),
                 position: Position {
-                    line: 1,
+                    line: 12,
                     character: 6,
                 },
             },
@@ -297,7 +299,7 @@ mod test {
                 FilePosition {
                     path: String::from("graph.py"),
                     position: Position {
-                        line: 1,
+                        line: 12,
                         character: 6,
                     },
                 },
@@ -311,16 +313,57 @@ mod test {
                 FilePosition {
                     path: String::from("main.py"),
                     position: Position {
+                        line: 6,
+                        character: 27,
+                    },
+                },
+                FilePosition {
+                    path: String::from("main.py"),
+                    position: Position {
+                        line: 15,
+                        character: 12,
+                    },
+                },
+                FilePosition {
+                    path: String::from("search.py"),
+                    position: Position {
+                        line: 1,
+                        character: 18,
+                    },
+                },
+                FilePosition {
+                    path: String::from("search.py"),
+                    position: Position {
                         line: 5,
-                        character: 8,
+                        character: 41,
+                    },
+                },
+                FilePosition {
+                    path: String::from("search.py"),
+                    position: Position {
+                        line: 16,
+                        character: 37,
                     },
                 },
             ],
             context: None,
-            selected_identifier: reference_response.selected_identifier.clone(), // We can't predict this value
+            selected_identifier: Identifier {
+                name: String::from("AStarGraph"),
+                range: FileRange {
+                    path: String::from("graph.py"),
+                    start: Position {
+                        line: 12,
+                        character: 6,
+                    },
+                    end: Position {
+                        line: 12,
+                        character: 16,
+                    },
+                },
+            },
         };
 
-        assert_eq!(expected_response, reference_response);
+        assert_eq!(reference_response, expected_response);
         Ok(())
     }
 
@@ -463,7 +506,7 @@ mod test {
         let error_response: ErrorResponse = serde_json::from_slice(&bytes)?;
         assert_eq!(
             error_response.error,
-            "Failed to find references from position: No identifier found at position. Closest matches: [Identifier { name: \"b\", range: FileRange { path: \"graph.py\", start: Position { line: 58, character: 15 }, end: Position { line: 58, character: 16 } } }, Identifier { name: \"barrier\", range: FileRange { path: \"graph.py\", start: Position { line: 58, character: 20 }, end: Position { line: 58, character: 27 } } }, Identifier { name: \"barrier\", range: FileRange { path: \"graph.py\", start: Position { line: 57, character: 12 }, end: Position { line: 57, character: 19 } } }]"
+            "Failed to find references from position: No identifier found at position. Closest matches: [Identifier { name: \"n\", range: FileRange { path: \"graph.py\", start: Position { line: 88, character: 15 }, end: Position { line: 88, character: 16 } } }, Identifier { name: \"n\", range: FileRange { path: \"graph.py\", start: Position { line: 87, character: 16 }, end: Position { line: 87, character: 17 } } }, Identifier { name: \"append\", range: FileRange { path: \"graph.py\", start: Position { line: 87, character: 18 }, end: Position { line: 87, character: 24 } } }]"
         );
 
         Ok(())

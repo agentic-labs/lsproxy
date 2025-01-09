@@ -1,0 +1,7 @@
+id: decorator
+language: tsx
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    kind: decorator

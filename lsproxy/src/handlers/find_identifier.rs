@@ -150,7 +150,7 @@ mod test {
             path: String::from("graph.py"),
             name: String::from("AStarGraph"),
             position: Some(Position {
-                line: 1,
+                line: 12,
                 character: 6,
             }),
         });
@@ -164,7 +164,7 @@ mod test {
 
         assert_eq!(identifier_response.identifiers.len(), 1);
         assert_eq!(identifier_response.identifiers[0].name, "AStarGraph");
-        assert_eq!(identifier_response.identifiers[0].range.start.line, 1);
+        assert_eq!(identifier_response.identifiers[0].range.start.line, 12);
         Ok(())
     }
 

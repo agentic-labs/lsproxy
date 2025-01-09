@@ -7,7 +7,7 @@
       "name": "Apache-2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0"
     },
-    "version": "0.1.4"
+    "version": "0.1.5"
   },
   "servers": [
     {
@@ -121,6 +121,42 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/IdentifierResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/symbol/find-referenced-symbols": {
+      "post": {
+        "tags": [
+          "symbol"
+        ],
+        "operationId": "find_referenced_symbols",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetReferencedSymbolsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Referenced symbols retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferencedSymbolsResponse"
                 }
               }
             }
@@ -433,6 +469,18 @@
           }
         }
       },
+      "GetReferencedSymbolsRequest": {
+        "type": "object",
+        "description": "Request to get the symbols that are referenced from the symbol at the given position",
+        "required": [
+          "identifier_position"
+        ],
+        "properties": {
+          "identifier_position": {
+            "$ref": "#/components/schemas/FilePosition"
+          }
+        }
+      },
       "GetReferencesRequest": {
         "type": "object",
         "required": [
@@ -553,6 +601,52 @@
         "properties": {
           "source_code": {
             "type": "string"
+          }
+        }
+      },
+      "ReferenceWithSymbolDefinition": {
+        "type": "object",
+        "required": [
+          "reference",
+          "symbols"
+        ],
+        "properties": {
+          "reference": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Symbol"
+            }
+          }
+        }
+      },
+      "ReferencedSymbolsResponse": {
+        "type": "object",
+        "required": [
+          "workspace_symbols",
+          "external_symbols",
+          "not_found"
+        ],
+        "properties": {
+          "external_symbols": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          "not_found": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          "workspace_symbols": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferenceWithSymbolDefinition"
+            }
           }
         }
       },

@@ -7,7 +7,7 @@ use crate::{
     utils::file_utils::absolute_path_to_relative_path_string,
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AstGrepMatch {
     pub text: String,
@@ -57,25 +57,25 @@ pub struct ByteOffset {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AstGrepPosition {
-    pub line: usize,
-    pub column: usize,
+    pub line: u32,
+    pub column: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CharCount {
     pub leading: usize,
     pub trailing: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaVariables {
     pub single: SingleVariable,
     pub multi: MultiVariables,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SingleVariable {
     #[serde(rename = "NAME")]
     pub name: MetaVariable,
@@ -83,24 +83,33 @@ pub struct SingleVariable {
     pub context: Option<MetaVariable>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MultiVariables {
     pub secondary: Option<Vec<MetaVariable>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaVariable {
     pub text: String,
     pub range: AstGrepRange,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Label {
     pub text: String,
     pub range: AstGrepRange,
+}
+
+impl From<&AstGrepMatch> for lsp_types::Position {
+    fn from(ast_match: &AstGrepMatch) -> Self {
+        Self {
+            line: ast_match.range.start.line as u32,
+            character: ast_match.range.start.column as u32,
+        }
+    }
 }
 
 impl From<AstGrepMatch> for Symbol {
@@ -135,7 +144,6 @@ impl From<AstGrepMatch> for Symbol {
 
 impl From<AstGrepMatch> for Identifier {
     fn from(ast_match: AstGrepMatch) -> Self {
-        assert!(ast_match.rule_id == "all-identifiers");
         let path = absolute_path_to_relative_path_string(&PathBuf::from(ast_match.file.clone()));
         let match_range = ast_match.get_range();
         Identifier {

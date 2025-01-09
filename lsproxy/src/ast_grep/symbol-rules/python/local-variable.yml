@@ -1,0 +1,18 @@
+id: local-variable
+language: python
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    kind: assignment
+    field: left
+    pattern: $CONTEXT
+    not:
+      inside:
+        kind: expression_statement
+        inside:
+          any:
+            - kind: block
+              inside:
+                kind: class_definition
+            - kind: module

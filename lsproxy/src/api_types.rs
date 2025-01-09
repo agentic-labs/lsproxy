@@ -146,6 +146,12 @@ impl From<FileRange> for lsp_types::Range {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReferenceWithSymbolDefinition {
+    pub reference: Identifier,
+    pub symbols: Vec<Symbol>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CodeContext {
     pub range: FileRange,
     pub source_code: String,
@@ -206,6 +212,12 @@ pub struct GetReferencesRequest {
     #[serde(default)]
     #[schema(example = false)]
     pub include_raw_response: bool,
+}
+
+/// Request to get the symbols that are referenced from the symbol at the given position
+#[derive(Deserialize, ToSchema, IntoParams)]
+pub struct GetReferencedSymbolsRequest {
+    pub identifier_position: FilePosition,
 }
 
 /// Request to get the symbols in a file.
@@ -297,6 +309,13 @@ pub struct ReferencesResponse {
     pub selected_identifier: Identifier,
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReferencedSymbolsResponse {
+    pub workspace_symbols: Vec<ReferenceWithSymbolDefinition>,
+    pub external_symbols: Vec<Identifier>,
+    pub not_found: Vec<Identifier>,
+}
+
 pub type SymbolResponse = Vec<Symbol>;
 
 impl From<Location> for FilePosition {
@@ -340,4 +359,204 @@ pub struct FindIdentifierRequest {
 #[serde(rename_all = "camelCase")]
 pub struct IdentifierResponse {
     pub identifiers: Vec<Identifier>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contains_multi_line_range() {
+        let range = FileRange {
+            path: "test.rs".to_string(),
+            start: Position {
+                line: 10,
+                character: 5,
+            },
+            end: Position {
+                line: 12,
+                character: 10,
+            },
+        };
+
+        // Test positions within the range
+        assert!(
+            range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 11,
+                    character: 0
+                }
+            }),
+            "middle line should be contained"
+        );
+        assert!(
+            range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 5
+                }
+            }),
+            "start position should be contained"
+        );
+        assert!(
+            range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 12,
+                    character: 10
+                }
+            }),
+            "end position should be contained"
+        );
+    }
+
+    #[test]
+    fn test_contains_multi_line_range_outside_positions() {
+        let range = FileRange {
+            path: "test.rs".to_string(),
+            start: Position {
+                line: 10,
+                character: 5,
+            },
+            end: Position {
+                line: 12,
+                character: 10,
+            },
+        };
+
+        assert!(
+            !range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 9,
+                    character: 0
+                }
+            }),
+            "line before start should not be contained"
+        );
+        assert!(
+            !range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 13,
+                    character: 0
+                }
+            }),
+            "line after end should not be contained"
+        );
+        assert!(
+            !range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 4
+                }
+            }),
+            "position before start on first line should not be contained"
+        );
+        assert!(
+            !range.contains(FilePosition {
+                path: range.path.clone(),
+                position: Position {
+                    line: 12,
+                    character: 11
+                }
+            }),
+            "position after end on last line should not be contained"
+        );
+    }
+
+    #[test]
+    fn test_contains_single_line_range() {
+        let single_line_range = FileRange {
+            path: "test.rs".to_string(),
+            start: Position {
+                line: 10,
+                character: 5,
+            },
+            end: Position {
+                line: 10,
+                character: 10,
+            },
+        };
+
+        assert!(
+            single_line_range.contains(FilePosition {
+                path: single_line_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 7
+                }
+            }),
+            "position within single line range should be contained"
+        );
+        assert!(
+            !single_line_range.contains(FilePosition {
+                path: single_line_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 4
+                }
+            }),
+            "position before single line range should not be contained"
+        );
+        assert!(
+            !single_line_range.contains(FilePosition {
+                path: single_line_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 11
+                }
+            }),
+            "position after single line range should not be contained"
+        );
+    }
+
+    #[test]
+    fn test_contains_zero_width_range() {
+        let zero_width_range = FileRange {
+            path: "test.rs".to_string(),
+            start: Position {
+                line: 10,
+                character: 5,
+            },
+            end: Position {
+                line: 10,
+                character: 5,
+            },
+        };
+
+        assert!(
+            zero_width_range.contains(FilePosition {
+                path: zero_width_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 5
+                }
+            }),
+            "position at zero-width range should be contained"
+        );
+        assert!(
+            !zero_width_range.contains(FilePosition {
+                path: zero_width_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 4
+                }
+            }),
+            "position before zero-width range should not be contained"
+        );
+        assert!(
+            !zero_width_range.contains(FilePosition {
+                path: zero_width_range.path.clone(),
+                position: Position {
+                    line: 10,
+                    character: 6
+                }
+            }),
+            "position after zero-width range should not be contained"
+        );
+    }
 }

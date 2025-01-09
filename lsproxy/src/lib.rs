@@ -24,11 +24,13 @@ mod utils;
 
 use crate::api_types::{
     get_mount_dir, set_global_mount_dir, CodeContext, DefinitionResponse, ErrorResponse,
-    FilePosition, FileRange, FileSymbolsRequest, GetDefinitionRequest, GetReferencesRequest,
-    HealthResponse, Position, ReferencesResponse, SupportedLanguages, Symbol, SymbolResponse,
+    FilePosition, FileRange, FileSymbolsRequest, GetDefinitionRequest, GetReferencedSymbolsRequest,
+    GetReferencesRequest, HealthResponse, Position, ReferencedSymbolsResponse, ReferencesResponse,
+    SupportedLanguages, Symbol, SymbolResponse,
 };
 use crate::handlers::{
-    definitions_in_file, find_definition, find_references, health_check, list_files,
+    definitions_in_file, find_definition, find_referenced_symbols, find_references, health_check,
+    list_files,
 };
 use crate::lsp::manager::Manager;
 // use crate::utils::doc_utils::make_code_sample;
@@ -42,7 +44,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
 #[openapi(
     info(
         title = "lsproxy",
-        version = "0.1.4",
+        version = "0.1.5",
         license(
             name = "Apache-2.0",
             url = "https://www.apache.org/licenses/LICENSE-2.0"
@@ -56,9 +58,11 @@ pub fn check_mount_dir() -> std::io::Result<()> {
             FileSymbolsRequest,
             GetDefinitionRequest,
             GetReferencesRequest,
+            GetReferencedSymbolsRequest,
             SupportedLanguages,
             DefinitionResponse,
             ReferencesResponse,
+            ReferencedSymbolsResponse,
             SymbolResponse,
             FilePosition,
             Position,
@@ -78,6 +82,7 @@ pub fn check_mount_dir() -> std::io::Result<()> {
         crate::handlers::health_check,
         crate::handlers::list_files,
         crate::handlers::read_source_code,
+        crate::handlers::find_referenced_symbols,
         crate::handlers::find_identifier,
     ),
     tags(
@@ -206,6 +211,8 @@ pub async fn run_server_with_port_and_host(
                     api_scope.service(resource(path).route(post().to(find_definition))),
                 ("/symbol/find-references", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(find_references))),
+                ("/symbol/find-referenced-symbols", Some(Method::Post)) =>
+                    api_scope.service(resource(path).route(post().to(find_referenced_symbols))),
                 ("/symbol/find-identifier", Some(Method::Post)) =>
                     api_scope.service(resource(path).route(post().to(find_identifier))),
                 ("/symbol/definitions-in-file", Some(Method::Get)) =>

@@ -1,0 +1,16 @@
+id: function-call
+language: php
+rule:
+  any:
+    - kind: name
+      pattern: $NAME
+      inside:
+        any:
+          - kind: function_call_expression
+          - kind: member_call_expression
+          - kind: object_creation_expression
+    - kind: name
+      pattern: $NAME
+      inside:
+        kind: scoped_call_expression
+        field: name

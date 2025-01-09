@@ -1,0 +1,14 @@
+id: function-call
+language: tsx
+rule:
+  any:
+  - kind: identifier
+    pattern: $NAME
+    inside:
+      kind: call_expression
+  - kind: property_identifier
+    pattern: $NAME
+    inside:
+      kind: member_expression
+      inside:
+        kind: call_expression
