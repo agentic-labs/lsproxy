@@ -82,6 +82,8 @@ pub enum SupportedLanguages {
     Golang,
     #[serde(rename = "php")]
     PHP,
+    #[serde(rename = "ruby")]
+    Ruby,
 }
 
 /// A position within a text document, using 0-based indexing

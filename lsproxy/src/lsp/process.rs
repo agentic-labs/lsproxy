@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::sync::Arc;
+use log::debug;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
@@ -48,11 +49,13 @@ impl Process for ProcessHandler {
             }
 
             let line = String::from_utf8_lossy(&buffer[buffer.len() - n..]);
+            debug!("Received line: {}", line);
             if line.trim().is_empty() && content_length.is_some() {
                 let length =
                     content_length.ok_or("Missing Content-Length header in LSP message")?;
                 let mut content = vec![0; length];
                 stdout.read_exact(&mut content).await?;
+                debug!("received content {:?}", String::from_utf8(content.clone())?);
                 return Ok(String::from_utf8(content)?);
             } else if line.starts_with("Content-Length: ") {
                 content_length = Some(line.trim_start_matches("Content-Length: ").trim().parse()?);

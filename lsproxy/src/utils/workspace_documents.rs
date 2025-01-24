@@ -96,6 +96,11 @@ pub const PHP_FILE_PATTERNS: &[&str] = &[
 ];
 pub const PHP_EXTENSIONS: &[&str] = &["php", "phtml", "phps", "php5", "php7", "php8"];
 
+pub const RUBY_ROOT_FILES: &[&str] = &["Gemfile", "Rakefile", "config.ru", "*.gemspec"];
+pub const RUBY_FILE_PATTERNS: &[&str] = &["**/*.rb", "**/*.rake"];
+pub const RUBY_EXTENSIONS: &[&str] = &["rb", "rake"];
+
+
 #[derive(Clone, PartialEq)]
 pub enum DidOpenConfiguration {
     Lazy,

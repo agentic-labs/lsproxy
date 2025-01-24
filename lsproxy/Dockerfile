@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install \
     build-essential \
     gcc \
     g++ \
+    ruby-full \
     php \
     php-xml \
     php-mbstring \
@@ -72,6 +73,7 @@ RUN pip install jedi-language-server ast-grep-cli
 
 # Install global npm packages
 RUN npm install -g typescript-language-server typescript
+RUN gem install ruby-lsp
 
 # Install go and Gopls
 
@@ -85,6 +87,7 @@ RUN curl -O -L "https://go.dev/dl/go1.21.4.linux-${TARGETARCH}.tar.gz" && \
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/root/go
 ENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+ENV PATH="$PATH:$(gem environment gemdir)/bin"
 # Install coverage tools
 RUN cargo install cargo-llvm-cov
 RUN rustup component add llvm-tools-preview

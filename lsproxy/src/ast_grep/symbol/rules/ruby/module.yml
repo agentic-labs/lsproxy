@@ -1,0 +1,18 @@
+id: module
+language: ruby
+rule:
+  any:
+    - kind: constant
+      pattern: $NAME
+      inside:
+        kind: module
+        pattern: $CONTEXT
+        field: name
+    - kind: identifier
+      pattern: $NAME
+      inside: 
+        kind: scope_resolution
+        field: name
+        inside: 
+          kind: module
+          pattern: $CONTEXT

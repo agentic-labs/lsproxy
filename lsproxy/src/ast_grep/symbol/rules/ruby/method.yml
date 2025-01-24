@@ -1,0 +1,12 @@
+id: method
+language: ruby
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    any:
+      - kind: method
+      - kind: singleton_method
+      - kind: alias
+    pattern: $CONTEXT
+    field: name
