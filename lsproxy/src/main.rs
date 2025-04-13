@@ -1,6 +1,6 @@
 use clap::Parser;
 use env_logger::Env;
-use lsproxy::{initialize_app_state_with_mount_dir, run_server_with_host, write_openapi_to_file};
+use lsproxy::{initialize_app_state_with_mount_dir, run_server_with_port_and_host, write_openapi_to_file};
 use std::path::PathBuf;
 
 /// Command line interface for LSProxy server
@@ -18,11 +18,15 @@ struct Cli {
     /// Override the default mount directory path where your workspace files are located
     #[arg(long)]
     mount_dir: Option<String>,
+
+    /// Port number to bind the server to
+    #[arg(long, default_value_t = 4444)]
+    port: u16,
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Starting...");
+    println!("Starting on port {}", cli.port);
 
     // Set up panic handler for better error reporting
     std::panic::set_hook(Box::new(|panic_info| {
@@ -50,5 +54,5 @@ async fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
     // Run the server with specified host
-    run_server_with_host(app_state, &cli.host).await
+    run_server_with_port_and_host(app_state, cli.port, &cli.host).await
 }
