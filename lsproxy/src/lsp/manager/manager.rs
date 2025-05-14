@@ -20,6 +20,24 @@ use lsp_types::{GotoDefinitionResponse, Location, Position, Range};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEvent};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// Key for identifying an LSP client in the manager.
+/// By default, one per language; for ts/js, one per workspace folder.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LspClientKey {
+    PerLanguage(SupportedLanguages),
+    PerWorkspaceFolder(SupportedLanguages, String), // (language, workspace_folder_path)
+}
+
+impl LspClientKey {
+    pub fn for_language(lang: SupportedLanguages) -> Self {
+        LspClientKey::PerLanguage(lang)
+    }
+    pub fn for_workspace_folder(lang: SupportedLanguages, folder: String) -> Self {
+        LspClientKey::PerWorkspaceFolder(lang, folder)
+    }
+}
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -29,7 +47,7 @@ use tokio::sync::broadcast::{channel, Sender};
 use tokio::sync::Mutex;
 
 pub struct Manager {
-    lsp_clients: HashMap<SupportedLanguages, Arc<Mutex<Box<dyn LspClient>>>>,
+    lsp_clients: HashMap<LspClientKey, Arc<Mutex<Box<dyn LspClient>>>>,
     watch_events_sender: Sender<DebouncedEvent>,
     ast_grep: AstGrepClient,
 }
@@ -139,70 +157,123 @@ impl Manager {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let lsps = self.detect_languages_in_workspace(workspace_path);
         for lsp in lsps {
-            if self.get_client(lsp).is_some() {
-                continue;
-            }
-            debug!("Starting {:?} LSP", lsp);
-            let mut client: Box<dyn LspClient> = match lsp {
-                SupportedLanguages::Python => Box::new(
-                    JediClient::new(workspace_path, self.watch_events_sender.subscribe())
-                        .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::TypeScriptJavaScript => Box::new(
-                    TypeScriptLanguageClient::new(
+            match lsp {
+                SupportedLanguages::TypeScriptJavaScript => {
+                    // For ts/js, start a server per workspace folder
+                    let mut dummy_ts_client = TypeScriptLanguageClient::new(
                         workspace_path,
                         self.watch_events_sender.subscribe(),
                     )
                     .await
-                    .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::Rust => Box::new(
-                    RustAnalyzerClient::new(workspace_path, self.watch_events_sender.subscribe())
+                    .map_err(|e| e.to_string())?;
+                    let folders = dummy_ts_client
+                        .find_workspace_folders(workspace_path.to_string())
                         .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::CPP => Box::new(
-                    ClangdClient::new(workspace_path, self.watch_events_sender.subscribe())
+                        .unwrap_or_else(|_| vec![]);
+
+                    for folder in folders {
+                        let folder_path = folder
+                            .uri
+                            .to_file_path()
+                            .ok()
+                            .and_then(|p| p.to_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| workspace_path.to_string());
+                        let key = LspClientKey::for_workspace_folder(
+                            SupportedLanguages::TypeScriptJavaScript,
+                            folder_path.clone(),
+                        );
+                        if self.lsp_clients.get(&key).is_some() {
+                            continue;
+                        }
+                        debug!(
+                            "Starting TypeScript/JavaScript LSP for workspace folder {}",
+                            folder_path
+                        );
+                        let mut client: Box<dyn LspClient> = Box::new(
+                            TypeScriptLanguageClient::new(
+                                &folder_path,
+                                self.watch_events_sender.subscribe(),
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?,
+                        );
+                        client
+                            .initialize(folder_path.clone())
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        client
+                            .setup_workspace(&folder_path)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        self.lsp_clients
+                            .insert(key, Arc::new(Mutex::new(client)));
+                    }
+                }
+                _ => {
+                    let key = LspClientKey::for_language(lsp);
+                    if self.lsp_clients.get(&key).is_some() {
+                        continue;
+                    }
+                    debug!("Starting {:?} LSP", lsp);
+                    let mut client: Box<dyn LspClient> = match lsp {
+                        SupportedLanguages::Python => Box::new(
+                            JediClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::Rust => Box::new(
+                            RustAnalyzerClient::new(
+                                workspace_path,
+                                self.watch_events_sender.subscribe(),
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::CPP => Box::new(
+                            ClangdClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::CSharp => Box::new(
+                            CSharpClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::Java => Box::new(
+                            JdtlsClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::Golang => Box::new(
+                            GoplsClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::PHP => Box::new(
+                            PhpactorClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::Ruby => Box::new(
+                            RubyClient::new(workspace_path, self.watch_events_sender.subscribe())
+                                .await
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        SupportedLanguages::TypeScriptJavaScript => unreachable!(),
+                    };
+                    client
+                        .initialize(workspace_path.to_string())
                         .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::CSharp => Box::new(
-                    CSharpClient::new(workspace_path, self.watch_events_sender.subscribe())
+                        .map_err(|e| e.to_string())?;
+                    debug!("Setting up workspace");
+                    client
+                        .setup_workspace(workspace_path)
                         .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::Java => Box::new(
-                    JdtlsClient::new(workspace_path, self.watch_events_sender.subscribe())
-                        .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::Golang => Box::new(
-                    GoplsClient::new(workspace_path, self.watch_events_sender.subscribe())
-                        .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::PHP => Box::new(
-                    PhpactorClient::new(workspace_path, self.watch_events_sender.subscribe())
-                        .await
-                        .map_err(|e| e.to_string())?,
-                ),
-                SupportedLanguages::Ruby => Box::new(
-                    RubyClient::new(workspace_path, self.watch_events_sender.subscribe())
-                        .await
-                        .map_err(|e| e.to_string())?,
-                ),
-            };
-            client
-                .initialize(workspace_path.to_string())
-                .await
-                .map_err(|e| e.to_string())?;
-            debug!("Setting up workspace");
-            client
-                .setup_workspace(workspace_path)
-                .await
-                .map_err(|e| e.to_string())?;
-            self.lsp_clients.insert(lsp, Arc::new(Mutex::new(client)));
+                        .map_err(|e| e.to_string())?;
+                    self.lsp_clients
+                        .insert(key, Arc::new(Mutex::new(client)));
+                }
+            }
         }
         Ok(())
     }
@@ -241,6 +312,28 @@ impl Manager {
         }
     }
 
+    /// Helper: For ts/js, find workspace folder containing the file.
+    fn find_enclosing_workspace_folder(&self, file_path: &str) -> Option<String> {
+        // For each ts/js workspace_folder client, see if file_path is inside
+        let file_path = PathBuf::from(file_path).canonicalize().ok()?;
+        self.lsp_clients
+            .keys()
+            .filter_map(|key| match key {
+                LspClientKey::PerWorkspaceFolder(lang, folder)
+                    if *lang == SupportedLanguages::TypeScriptJavaScript =>
+                {
+                    let folder_path = Path::new(folder).canonicalize().ok()?;
+                    if file_path.starts_with(&folder_path) {
+                        Some(folder.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .max_by_key(|folder| folder.len()) // Prefer the longest match
+    }
+
     pub async fn find_definition(
         &self,
         file_path: &str,
@@ -258,8 +351,14 @@ impl Manager {
             LspManagerError::InternalError(format!("Language detection failed: {}", e))
         })?;
 
+        let workspace_folder = if lsp_type == SupportedLanguages::TypeScriptJavaScript {
+            self.find_enclosing_workspace_folder(full_path_str)
+        } else {
+            None
+        };
+
         let client = self
-            .get_client(lsp_type)
+            .get_client(lsp_type, workspace_folder.as_deref())
             .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
         let mut locked_client = client.lock().await;
         let mut definition = locked_client
@@ -301,11 +400,25 @@ impl Manager {
         Ok(definition)
     }
 
+    /// For ts/js: workspace_folder must be provided. For others, use language only.
     pub fn get_client(
         &self,
         lsp_type: SupportedLanguages,
+        workspace_folder: Option<&str>,
     ) -> Option<Arc<Mutex<Box<dyn LspClient>>>> {
-        self.lsp_clients.get(&lsp_type).cloned()
+        match lsp_type {
+            SupportedLanguages::TypeScriptJavaScript => {
+                if let Some(folder) = workspace_folder {
+                    self.lsp_clients.get(&LspClientKey::for_workspace_folder(
+                        lsp_type,
+                        folder.to_string(),
+                    )).cloned()
+                } else {
+                    None
+                }
+            }
+            _ => self.lsp_clients.get(&LspClientKey::for_language(lsp_type)).cloned(),
+        }
     }
 
     pub async fn find_references(
@@ -326,8 +439,15 @@ impl Manager {
         let lsp_type = detect_language(full_path_str).map_err(|e| {
             LspManagerError::InternalError(format!("Language detection failed: {}", e))
         })?;
+
+        let workspace_folder = if lsp_type == SupportedLanguages::TypeScriptJavaScript {
+            self.find_enclosing_workspace_folder(full_path_str)
+        } else {
+            None
+        };
+
         let client = self
-            .get_client(lsp_type)
+            .get_client(lsp_type, workspace_folder.as_deref())
             .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
         let mut locked_client = client.lock().await;
 
@@ -384,8 +504,14 @@ impl Manager {
             }
         };
 
+        let workspace_folder = if lsp_type == SupportedLanguages::TypeScriptJavaScript {
+            self.find_enclosing_workspace_folder(full_path_str)
+        } else {
+            None
+        };
+
         let client = self
-            .get_client(lsp_type)
+            .get_client(lsp_type, workspace_folder.as_deref())
             .ok_or(LspManagerError::LspClientNotFound(lsp_type))?;
         let mut locked_client = client.lock().await;
         let mut definitions = Vec::new();
