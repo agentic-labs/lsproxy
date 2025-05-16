@@ -1,8 +1,13 @@
 id: method
 language: javascript
 rule:
-    kind: identifier
-    pattern: $NAME
-    inside:
-      kind: method_definition
-      pattern: $CONTEXT
+  pattern: $NAME
+  any:
+    - kind: identifier
+      inside:
+        kind: method_definition
+        pattern: $CONTEXT
+    - kind: property_identifier
+      inside:
+        kind: method_definition
+        pattern: $CONTEXT

@@ -24,5 +24,7 @@ rule:
       inside:
         kind: pair
         has:
-          kind: arrow_function
+          any:
+            - kind: function_expression
+            - kind: arrow_function
         pattern: $CONTEXT
