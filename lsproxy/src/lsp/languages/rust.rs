@@ -12,6 +12,7 @@ use url::Url;
 
 use crate::lsp::{JsonRpcHandler, LspClient, PendingRequests, ProcessHandler};
 
+use crate::utils::file_utils::search_files;
 use crate::utils::workspace_documents::{
     DidOpenConfiguration, WorkspaceDocumentsHandler, DEFAULT_EXCLUDE_PATTERNS, RUST_FILE_PATTERNS,
     RUST_ROOT_FILES,
@@ -54,11 +55,21 @@ impl LspClient for RustAnalyzerClient {
                     .unwrap(),
             ),
             root_uri: Some(Url::from_file_path(&root_path).map_err(|_| "Invalid root path")?),
-            initialization_options: Some(serde_json::json!({
-                "cargo": {
-                    "sysroot": serde_json::Value::Null
+            initialization_options: {
+                // Discover Cargo.toml files for potential linked projects support
+                let cargo_tomls = Self::discover_cargo_tomls(&root_path);
+                let mut init_options = serde_json::json!({
+                    "cargo": { "sysroot": serde_json::Value::Null }
+                });
+
+                if cargo_tomls.len() > 1 {
+                    // Safe to unwrap as we created an object above
+                    if let Some(obj) = init_options.as_object_mut() {
+                        obj.insert("linkedProjects".to_string(), serde_json::json!(cargo_tomls));
+                    }
                 }
-            })),
+                Some(init_options)
+            },
             ..Default::default()
         })
     }
@@ -129,5 +140,28 @@ impl RustAnalyzerClient {
             workspace_documents,
             pending_requests: PendingRequests::new(),
         })
+    }
+    /// Discover all Cargo.toml files under the workspace, returning absolute paths.
+    fn discover_cargo_tomls(root_path: &str) -> Vec<String> {
+        let matches = search_files(
+            Path::new(root_path),
+            vec!["**/Cargo.toml".to_string()],
+            DEFAULT_EXCLUDE_PATTERNS
+                .iter()
+                .map(|&s| s.to_string())
+                .collect(),
+            true,
+        )
+        .unwrap_or_default();
+
+        let mut paths: Vec<String> = matches
+            .into_iter()
+            .filter_map(|p| p.canonicalize().ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        paths.sort();
+        paths.dedup();
+        paths
     }
 }
